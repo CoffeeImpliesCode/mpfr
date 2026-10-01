@@ -1,0 +1,66 @@
+.{
+    .name = .mpfr,
+    .version = "4.2.2",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x315544a3cf639019,
+
+    // The self-contained GMP snapshot required by the shared fork contract.
+    // It must be the parent's verified GMP package, including its own
+    // build.zig.zon, and it must declare the name `gmp` and expose
+    // `dep.artifact("gmp")`. `-Dsystem=gmp` selects an installed GMP instead.
+    .dependencies = .{
+        .gmp = .{
+            .path = "vendor/gmp",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "root.zig",
+        // `build.zig` imports `zig/config_gen.zig`; a package that does not
+        // ship it cannot resolve the import when it is fetched by hash.
+        "zig",
+        "fork",
+        "consumer",
+        // Upstream's own sources and licence terms, kept verbatim.
+        "src",
+        "doc",
+        "examples",
+        "tests",
+        "tools",
+        "tune",
+        "m4",
+        "other",
+        "COPYING",
+        "COPYING.LESSER",
+        "AUTHORS",
+        "BUGS",
+        "ChangeLog",
+        "INSTALL",
+        "NEWS",
+        "PATCHES",
+        "README",
+        "TODO",
+        "VERSION",
+        "Makefile.am",
+        "acinclude.m4",
+        "autogen.sh",
+        "configure.ac",
+        "codespell.exclude",
+        "codespell.ignore",
+        "libtool-tcc-rpath.patch",
+        "libtool-tcc-wl.patch",
+        "version-ext.sh",
+        ".mailmap",
+        ".gitignore",
+        "vendor/gmp",
+        ".github",
+        // Fork provenance and divergence records.
+        "UPSTREAM.md",
+        "CHANGELOG.md",
+        "NOTICE.md",
+        "FORK-NOTES.md",
+        "README.zig.md",
+    },
+}

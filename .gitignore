@@ -35,3 +35,13 @@
 /missing
 /mpfr.pc
 /test-driver
+
+# Fork additions. Everything above is upstream's own ignore list, kept intact:
+# MPFR ships no .gitignore entries for a Zig build, so the two directories the
+# Zig build system creates at the repository root are added here rather than in
+# a separate file, because a second ignore file at the root is not possible and
+# a local exclude would not travel with the repository. Both are also absent
+# from the .paths allowlist in build.zig.zon, so a normal user build cannot
+# change the package hash. Recorded as FORK-NOTES entry 11.
+/.zig-cache/
+/zig-out/
