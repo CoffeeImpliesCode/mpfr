@@ -95,7 +95,10 @@ Conventions:
   silently (`rand/randbui.c` uses `MIN (bits, BITS_PER_ULONG)`); a bound of
   zero is `error.EmptyRange`, because GMP answers it with `DIVIDE_BY_ZERO`
   (`rand/randmui.c`). Neither reaches GMP, so a refused draw leaves the state
-  where it was. `nbits == 0` and `n == 1` are legal and both return 0.
+  where it was. `nbits == 0` and `n == 1` are legal and both return 0. A fresh
+  `Rand` starts at GMP's fixed Mersenne Twister default table
+  (`rand/randmts.c:166-171`, `rand/randmt.c:410-414`), so the stream is
+  reproducible rather than random until `seed` is called.
 * `parse(text, base)` and `setStr(text, base)` take a NUL terminated
   `[:0]const u8` and pass the pointer to GMP unchanged: no copy, no scratch
   buffer, no allocation. A string literal already has that type; text that does
@@ -113,11 +116,21 @@ Conventions:
   happens to hold the text of a particular value can be shorter than the bound
   and is then rejected. Size the buffer with `BigInt.sizeinbase` plus two, or
   use `toOwnedString` and skip the arithmetic.
-* rendering takes a base in 2..62. Base 0 is GMP's *parsing* convention, the
-  one that honours the `0x`, `0b` and leading `0` prefixes, so `parse` and
-  `setStr` accept it; the rendering functions do not, because
-  `mpz_sizeinbase`, which is what sizes the buffer, documents 2..62 and asserts
-  that range internally. Anything else fails with `error.InvalidBase`.
+* parsing takes a base of 0 or 2..62, and rendering takes 2..62. What base 0
+  means is not the same at every call site, which is GMP's own split rather
+  than this package's: `mpz_set_str` and `mpq_set_str` read a 0 as prefix
+  detection, so `0x`, `0b` and a leading `0` are honoured (`mpz/set_str.c:80-100`,
+  `doc/gmp.texi:4413-4418`), while `mpf_set_str` reads a 0 as base 10 with no
+  look at the text at all (`mpf/set_str.c:153-155`, `doc/gmp.texi:4877-4879`),
+  precisely so that `0.23` is not taken for octal. So `Float.parse`/`Float.setStr`
+  are decimal on base 0, and `BigInt.parse`/`Rational.parse` are not. The
+  rendering functions reject 0 because `mpz_sizeinbase`, which sizes the
+  buffer, documents 2..62 and asserts that range internally. Anything else
+  fails with `error.InvalidBase`.
+* `mpf_set_str` also accepts a negative base, -62 to -2, meaning the mantissa
+  is in `base` and the exponent is in decimal (`doc/gmp.texi:4869-4871`). The
+  facade's `base: u8` cannot express a negative value, so that one GMP feature
+  is reached through `gmp.c.mpf_set_str` rather than through `Float.setStr`.
 * `Float.writeTo(buffer, base, digits)` needs a positive `digits`. GMP reads
   `digits == 0` as "as many digits as the precision allows", a count it
   computes internally and does not export, so no capacity can be checked for
@@ -125,16 +138,40 @@ Conventions:
   `mpf_get_str`: the text has no radix point and no trailing zeros and the
   exponent is separate, so 3.1416 in base 10 is the text `31416` at exponent 1.
 * `toOwnedString(base)` is the separate, deliberately allocating API, for text
-  that must outlive the buffer. Its `deinit` frees with GMP's own free function.
+  that must outlive the buffer. Its `deinit` frees with GMP's own free function,
+  once per string.
+* `Float` truncates; it does not round to nearest. The precision `init` asks
+  for is a minimum that GMP rounds up to whole limbs, every `mpf` result is
+  truncated toward zero at the destination's precision, and `mpf_set_prec`
+  truncates the value it keeps (`doc/gmp.texi:4700-4702`, `:4807-4809`;
+  `mpf/set.c:46-50`, `mpf/set_prc.c:61-65`). `getDouble` truncates toward zero
+  as well (`doc/gmp.texi:4944-4946`), and `mpf` has no infinity and no NaN, so
+  an exponent that outruns the type is unpredictable (`doc/gmp.texi:4711-4713`).
+  The manual is explicit that `mpf` is not a smooth extension of IEEE 754
+  (`doc/gmp.texi:4715-4718`); a caller that needs round-to-nearest with a
+  chosen precision wants MPFR. `mpf_get_str`'s half-up rounding at the last
+  requested digit belongs to the rendering, not to the value
+  (`mpf/get_str.c:256-262`).
 * rendering returns the caller's own buffer as a `[:0]const u8`, so the text can
   be parsed again with no copy in between: `try value.setStr(try other.writeTo(&buffer, 10), 10)`.
 
 ## Ownership and memory
 
-GMP allocates with `gmp_allocate_func`, which defaults to `malloc`. This package
-**never** installs allocator hooks, so:
+GMP has one allocator for the whole library, held in the global slots
+`gmp_allocate_func`, `gmp_reallocate_func` and `gmp_free_func`, and
+`mp_set_memory_functions` is the only thing that replaces them
+(`doc/gmp.texi:7440-7450`). No built library code or facade method calls the
+setter. The facade uses the provider's current hooks, which default to `malloc`
+and matching reallocation/free functions. This fork's Zig tests replace them
+through `zig/test/alloc_probe.c`, linked only into tests. A program that replaces
+the hooks changes
+the allocator for every value the facade owns, before the change and after it,
+and GMP asks for that only while no GMP object is live
+(`doc/gmp.texi:7448-7450`). Because the provider is the library's and not a Zig
+one:
 
-* values are released with `mpz_clear`, `mpq_clear`, `mpf_clear`, `gmp_randclear`;
+* values are released with `mpz_clear`, `mpq_clear`, `mpf_clear`,
+  `gmp_randclear`, or `BigInt.deinit` and friends, which are those calls;
 * strings GMP allocated are released with GMP's own free function, obtained from
   `mp_get_memory_functions`, never with `free` and never with a Zig allocator;
 * that release passes the size of the block, not a placeholder. GMP documents
@@ -142,9 +179,25 @@ GMP allocates with `gmp_allocate_func`, which defaults to `malloc`. This package
   releases its own strings as `len + 1`; the default `free` ignores the argument,
   but a replaceable allocator may not, so `OwnedString` records the length and
   `deinit` reports `len + 1`;
-* borrowed data (`OwnedString.slice`, `writeTo` results, `raw`) never outlives
-  its owner, which is why those methods take the owner by value or return
-  slices with no lifetime extension.
+* a failed native allocation is never an `error.OutOfMemory`. GMP's allocator
+  functions may not return `NULL` (`doc/gmp.texi:7487-7490`) and the default one
+  prints and aborts (`memory.c:53-58`), so a Zig leak checker sees none of these
+  blocks and there is no Zig recovery path to promise.
+
+Every `init`, `parse` and `toOwnedString` produces one owned value and each has
+exactly one `deinit`. Zig has no move: a copy made by assignment, by a struct
+field, or by returning the value into a second binding is a *second name for
+one GMP allocation*, so releasing both names is a double free. `BigInt.clone`,
+`Rational.clone` and the values returned by `div`, `divexact`, `mod`,
+`numerator` and `denominator` are GMP's own copies into second allocations,
+each with its own `deinit`; they are not moves.
+
+`raw` is a reachable field rather than a borrow, so writing to it through
+`gmp.c` is the caller's decision and `deinit` still releases what GMP allocated.
+What is genuinely borrowed is `OwnedString.slice`, the `writeTo`
+results and `Float`'s `Rendered`: they point into the caller's own buffer or
+into the owner and never outlive it, which is why those methods take the owner
+by value or return slices with no lifetime extension.
 
 `zig/test/ownership.zig` proves this by counting GMP's allocations through a
 test only probe, linked into the test binary and never into the library. The
@@ -156,9 +209,13 @@ reports the wrong size is caught even though the default `free` would not care.
 `gmp.c` is the translation of the generated `gmp.h`, in full: `mpz`, `mpq`,
 `mpf`, `mpn`, `gmp_rand`, `gmp_printf`, `gmp_scanf`, `mp_get_memory_functions`,
 including the stdio and `va_list` functions, which `gmp.h` only declares once
-`<stdio.h>` and `<stdarg.h>` have been seen. Each facade value publishes the
-two pointer types GMP itself uses, so a value goes into the raw API with no
-cast and no copy:
+`<stdio.h>` and `<stdarg.h>` have been seen. It is a supported route, not an
+accident of the translation: it is exported from `dep.module("gmp")`, so a
+dependent that adds that module and links `dep.artifact("gmp")` reaches it. The
+artifact alone is the other route, for a C or `translate-c` consumer that wants
+the headers without the Zig module. Each facade value publishes the two
+pointer types GMP itself uses, so a value goes into the raw API with no cast
+and no copy:
 
 * `rawPtr()` takes `*Self` and returns the mutable `mpz_ptr` / `mpq_ptr` /
   `mpf_ptr` / `gmp_randstate_ptr`, for the calls GMP writes through;

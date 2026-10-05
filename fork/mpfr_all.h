@@ -16,6 +16,9 @@
  * cross-compile matrix, where the `_STDINT` / `_STDINT_H_` probes in
  * src/mpfr.h:1151-1154 are not guaranteed to fire under MinGW-w64 headers.
  *
+ * <stdio.h> also precedes <mpfr.h>, so GMP and MPFR expose their public
+ * FILE-taking entry points with the target libc's own FILE type.
+ *
  * The compiled library is pinned the same way, and has to be: the library only
  * defines `__gmpfr_set_sj` and its siblings in the units that reach
  * src/mpfr-intmax.h, so declaring them here without pinning the compile line
@@ -46,6 +49,7 @@
 /* Must precede <mpfr.h>: mpfr.h never includes <stdint.h> itself, see the
  * comment on `_MPFR_EXP_FORMAT == 4` in src/mpfr.h:194-208. */
 #include <stdint.h>
+#include <stdio.h>
 
 /* Request the intmax_t-based entry points unconditionally and portably. */
 #define MPFR_USE_INTMAX_T 1

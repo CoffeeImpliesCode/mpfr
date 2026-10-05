@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
+//! grant and why it matches MPFR's own primary upstream terms.
+
 //! A downstream user of the MPFR fork, reached only through
 //! `b.dependency("mpfr", ...)`.
 //!
@@ -18,12 +23,39 @@
 //!
 //!  * `src/mpfr.h:1162-1179` for the `__gmpfr_`-prefixed `intmax_t` entry
 //!    points, which are reached here through the raw module.
+//!
+//!  * `vendor/gmp/gmp-h.in:225-226, 683, 839, 855, 1042, 1053` and
+//!    `src/mpfr.h:487` for the integer block: MPFR's own API takes `mpz_t`
+//!    operands, so a downstream user of this package needs GMP out of the same
+//!    provider, and the one block below is what proves both halves arrived.
+//!
+//! ## The provider, in the runtime-loading configuration
+//!
+//! In the linked configuration the libraries are already available. In the
+//! runtime-loading configuration nothing is linked, so this program names its
+//! provider explicitly - `--provider <path>` on the command line, or the
+//! `MPFR_PROVIDER` environment variable - and stops with an explanation if it
+//! was told neither. It never falls back to a bundled or system copy.
 
 const std = @import("std");
 const Io = std.Io;
 const mpfr = @import("mpfr");
 
+/// The environment variable consulted when `--provider` was not given.
+const provider_variable = "MPFR_PROVIDER";
+
+/// A runtime-loading build has no provider until one is named.
+const ConfigurationError = error{NoProviderConfigured};
+
 pub fn main(init: std.process.Init) !void {
+    // The one explicit step the runtime-loading configuration asks for, before
+    // anything below can reach MPFR. It disappears at comptime in a linked
+    // build, which has nothing to load.
+    if (comptime mpfr.runtime_loaded) {
+        const provider = try providerRequest(init);
+        try mpfr.load(.{ .path = provider });
+    }
+
     var buffer: [2048]u8 = undefined;
     var stdout_writer = Io.File.stdout().writer(init.io, &buffer);
     const out = &stdout_writer.interface;
@@ -31,7 +63,15 @@ pub fn main(init: std.process.Init) !void {
 
     // The version is printed, not asserted: which release is pinned is the
     // provenance job's business, and a release pin here would only re-state it.
-    try out.print("mpfr {s}, reached through dep.module(\"mpfr\")\n", .{mpfr.version()});
+    try out.print("mpfr {s}, reached through dep.module(\"mpfr\") {s}\n", .{
+        mpfr.version(),
+        if (mpfr.runtime_loaded) "after an explicit load" else "through the link line",
+    });
+    if (comptime mpfr.runtime_loaded) {
+        const loaded = mpfr.loadedSource() orelse
+            return error.LoadSucceededWithoutARecordedRequest;
+        try out.print("provider loaded from {s}\n", .{loaded.path});
+    }
 
     // 2.5 at two bits: the manual's own example, 10.1b rounding to 10.0b = 2.
     {
@@ -200,8 +240,88 @@ pub fn main(init: std.process.Init) !void {
         try out.print("intmax_t entry points reachable: -1234567890123 in and out, 1234567890123 in and out\n", .{});
     }
 
+    // GMP is part of this package's surface, not an optional extra: MPFR's own
+    // API takes `mpz_t` operands (src/mpfr.h:487-488, 527, 544, 796-801), so a
+    // downstream user needs an integer from the same provider that the floating
+    // point comes from. The block below builds one, hands it to MPFR, reads it
+    // back and releases it, and every step is a checked consequence rather than
+    // a reachability claim.
+    {
+        var integer: mpfr.c.mpz_t = undefined;
+        mpfr.c.__gmpz_init(&integer[0]);
+        defer mpfr.c.__gmpz_clear(&integer[0]);
+
+        // 30 decimal digits, so the value does not fit any machine integer and
+        // GMP's own allocation is what holds it.
+        try expectEqual(@as(c_int, 0), mpfr.c.__gmpz_set_str(
+            &integer[0],
+            "123456789012345678901234567890",
+            10,
+        ));
+        try expect(mpfr.c.__gmpz_sizeinbase(&integer[0], 10) == 30);
+
+        mpfr.c.__gmpz_set_ui(&integer[0], 255);
+        try expectEqual(@as(c_ulong, 255), mpfr.c.__gmpz_get_ui(&integer[0]));
+        // 255 is `11111111`b, so eight bits are needed and four limbs would be
+        // far more than GMP needs.
+        try expectEqual(@as(usize, 8), mpfr.c.__gmpz_sizeinbase(&integer[0], 2));
+
+        // The hand-off that makes this block about MPFR rather than about GMP:
+        // the integer becomes a floating value at an explicit precision.
+        var x = mpfr.Float.init(200);
+        defer x.deinit();
+        try expectEqual(@as(c_int, 0), mpfr.c.mpfr_set_z(x.raw(), &integer[0], mpfr.c.MPFR_RNDN));
+        try expectEqualF64(255.0, x.toF64(.nearest_even));
+
+        // ... and back the other way, which is the same allocation question in
+        // the opposite direction: `mpfr_get_z` stores into an integer this
+        // program owns and MPFR writes nothing into memory of its own.
+        var bigger = mpfr.Float.init(200);
+        defer bigger.deinit();
+        _ = bigger.setPowerOfTwo(100, .nearest_even);
+        try expectEqual(@as(c_int, 0), mpfr.c.mpfr_get_z(&integer[0], bigger.rawConst(), mpfr.c.MPFR_RNDN));
+        // 2^100 is an exact integer, so nothing is rounded away.
+        try expectEqual(@as(usize, 31), mpfr.c.__gmpz_sizeinbase(&integer[0], 10));
+
+        try out.print("GMP integers reachable from the same provider: 255 -> {d}, 2^100 -> 31 digits\n", .{
+            @as(i64, @intFromFloat(x.toF64(.nearest_even))),
+        });
+    }
+
     try out.print("all consumer expectations met\n", .{});
     mpfr.cleanupMemory();
+}
+
+/// The provider this process should load, named explicitly.
+///
+/// Both sources are explicit. Nothing looks in a default location, and nothing
+/// falls back to a linked copy: a runtime-loading build that was not told which
+/// file to load reports that it was not told, rather than loading something else.
+fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
+    const args = init.minimal.args.toSlice(init.arena.allocator()) catch
+        return noProvider();
+    var index: usize = 1;
+    while (index < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--provider")) {
+            if (index + 1 >= args.len) return noProvider();
+            return args[index + 1];
+        }
+    }
+    return init.environ_map.get(provider_variable) orelse
+        return noProvider();
+}
+
+/// Say which variable is missing. An error name on its own would send the next
+/// person into the loader instead of to the command line.
+fn noProvider() ConfigurationError {
+    std.debug.print(
+        "mpfr consumer: this is a runtime-loading build. Pass --provider <path>, " ++
+            "or export {s} with a shared libmpfr whose dependency closure " ++
+            "contains a shared libgmp. Nothing is loaded by default and no " ++
+            "other file is tried.\n",
+        .{provider_variable},
+    );
+    return error.NoProviderConfigured;
 }
 
 /// Parse `text` in base 10 and return the value, which the caller then owns.

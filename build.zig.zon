@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
+// grant and why it matches MPFR's own primary upstream terms.
+
 .{
     .name = .mpfr,
     .version = "4.2.2",
@@ -21,8 +26,15 @@
         // `build.zig` imports `zig/config_gen.zig`; a package that does not
         // ship it cannot resolve the import when it is fetched by hash.
         "zig",
+        // The runtime route: `runtime/graph.zig` is imported by `build.zig` for
+        // the `-Druntime=true` route and the loader core it names is what that
+        // route resolves symbols through. A fetched package that did not ship
+        // the directory could not resolve the import.
+        "runtime",
         "fork",
-        "consumer",
+        "consumer/build.zig",
+        "consumer/build.zig.zon",
+        "consumer/src/main.zig",
         // Upstream's own sources and licence terms, kept verbatim.
         "src",
         "doc",
@@ -40,6 +52,9 @@
         "INSTALL",
         "NEWS",
         "PATCHES",
+        // `build.zig` embeds the pkg-config template to install `mpfr.pc`, so
+        // a fetched package that did not ship it could not resolve the embed.
+        "mpfr.pc.in",
         "README",
         "TODO",
         "VERSION",
@@ -58,9 +73,36 @@
         ".github",
         // Fork provenance and divergence records.
         "UPSTREAM.md",
+        // The per-file SHA-256 baseline for every upstream byte this package
+        // carries, and the script that verifies it from the package root. Both
+        // are needed by a fetched package for the provenance claim to be
+        // checkable rather than only assertable.
+        "UPSTREAM-BASELINE.sha256",
+        "check-upstream-baseline.sh",
         "CHANGELOG.md",
         "NOTICE.md",
         "FORK-NOTES.md",
         "README.zig.md",
+        // The fork README (written by this project's provenance role) and the
+        // packaging entry points it documents. They are listed here so a
+        // fetched or installed package carries the same provenance and
+        // packaging surface the build graph and its documentation describe;
+        // every one of them must exist, because a missing `.paths` entry is a
+        // package resolution failure.
+        //
+        // `flake.lock` exists in this tree, so it is named: the workspace's
+        // integration owner writes it, and a package that shipped `flake.nix`
+        // without it would re-resolve its own input on first evaluation instead
+        // of using the recorded one. `devenv.lock` is absent from this tree and
+        // is therefore not named; naming it would be a resolution failure.
+        "README.md",
+        "README.upstream.md",
+        "FORK-LICENSE.md",
+        "package.nix",
+        "flake.nix",
+        "flake.lock",
+        "devenv.nix",
+        "devenv.yaml",
+        ".envrc",
     },
 }

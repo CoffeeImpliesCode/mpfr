@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. mpfr's `FORK-LICENSE.md` at this repository's root records the
+// owner's authorization of that grant; the snapshot carries no GMP
+// `FORK-LICENSE.md` of its own. This is the GMP fork's file inside that
+// snapshot, and the supplier package's copy carries no such header, so a
+// re-sync must either keep this line deliberately or drop it deliberately.
+
 //! Derivation of the GMP build configuration from a resolved Zig target.
 //!
 //! GMP obtains two headers from `configure` before any library source can be
@@ -52,6 +60,13 @@ pub const Params = struct {
     /// True on LLP64 (Windows), where GMP must use `unsigned long long`
     /// limbs because `unsigned long` is only 32 bits wide.
     long_long_limb: bool,
+    /// `LIBGMP_DLL`: libgmp is built as a shared library, so its Windows
+    /// declarations must be imported by users and exported by the library
+    /// itself. `gmp-h.in:120-131` selects `__GMP_DECLSPEC` from this value
+    /// together with `__GMP_WITHIN_GMP`, and MPFR reads the same macro
+    /// (`src/mpfr.h:321-331`, `src/mpfr-impl.h:251-253`), so the GMP linkage
+    /// decides the whole DLL arrangement on both sides.
+    libgmp_dll: bool,
     /// True for big endian targets.
     big_endian: bool,
     /// `<alloca.h>` exists. Not on macOS, where `alloca` comes from
@@ -171,8 +186,9 @@ fn unsignedLongBits(target: std.Target, ptr_bits: u16) u16 {
     };
 }
 
-/// Derive the GMP configuration for `target` built at `optimize`.
-pub fn paramsFor(target: std.Target, optimize: std.builtin.OptimizeMode) Params {
+/// Derive the GMP configuration for `target` built at `optimize` as a shared
+/// library when `dll` is set.
+pub fn paramsFor(target: std.Target, optimize: std.builtin.OptimizeMode, dll: bool) Params {
     const ptr_bits = pointerBits(target.cpu.arch);
     const long_bits = unsignedLongBits(target, ptr_bits);
 
@@ -197,6 +213,7 @@ pub fn paramsFor(target: std.Target, optimize: std.builtin.OptimizeMode) Params 
         .sizeof_void_p = ptr_bits / 8,
         .long_long_limb = long_long_limb,
         .big_endian = target.cpu.arch.endian() == .big,
+        .libgmp_dll = dll and target.os.tag == .windows,
         .have_alloca_h = target.os.tag != .macos and target.os.tag != .ios,
         // Zig's clang gives wasm32 a 128-bit `long double`; GMP's printf only
         // needs it for `%Lf`, and the libc printf on that target is the least
@@ -426,9 +443,11 @@ fn substitution(p: Params, scratch: []u8, name: []const u8, cflags: []const u8) 
         // is defined; otherwise as `unsigned long`.
         return if (p.long_long_limb) "#define _LONG_LONG_LIMB 1" else "/* #undef _LONG_LONG_LIMB */";
     }
-    // Static linking only, so `__GMP_DECLSPEC` stays empty and the ABI is
-    // identical on LP64, LLP64 and wasm32.
-    if (std.mem.eql(u8, name, "LIBGMP_DLL")) return "0";
+    // `@LIBGMP_DLL@` is configure's `LIBGMP_DLL` (vendor/gmp/configure.ac:2728,
+    // set to 1 at line 2770 when a shared libgmp is built). It is the selected
+    // linkage, not a constant, and it is what carries the export/import
+    // decision in `gmp.h` and in every dependent header that reads it.
+    if (std.mem.eql(u8, name, "LIBGMP_DLL")) return if (p.libgmp_dll) "1" else "0";
     // No tuned assembly path is selected, so neither Power family macro is set.
     if (std.mem.eql(u8, name, "HAVE_HOST_CPU_FAMILY_power")) return "0";
     if (std.mem.eql(u8, name, "HAVE_HOST_CPU_FAMILY_powerpc")) return "0";

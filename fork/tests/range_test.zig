@@ -19,8 +19,10 @@
 
 const std = @import("std");
 const mpfr = @import("mpfr");
+const support = @import("support.zig");
 
 test "the documented exponent bounds accept the values this test uses" {
+    try support.requireProvider();
     // A precondition check, so a platform that narrows the range fails loudly
     // here rather than mysteriously inside the overflow cases. The four bounds
     // are the limits the library itself reports (src/mpfr.h:3733-3755), and
@@ -32,6 +34,7 @@ test "the documented exponent bounds accept the values this test uses" {
 }
 
 test "an out-of-range exponent request is rejected and changes nothing" {
+    try support.requireProvider();
     // doc/mpfr.texi:3733-3738: a non-zero return means the exponent was not
     // accepted and the range was not changed.
     const previous = mpfr.maximumExponentInUse();
@@ -44,6 +47,7 @@ test "an out-of-range exponent request is rejected and changes nothing" {
 }
 
 test "round-to-nearest overflow yields a positive infinity, inexact" {
+    try support.requireProvider();
     // tests/tdiv.c:920-930 with emax = 1: 1 / 0.5 = 2 is out of range.
     const previous_emin = mpfr.minimumExponentInUse();
     const previous_emax = mpfr.maximumExponentInUse();
@@ -74,6 +78,7 @@ test "round-to-nearest overflow yields a positive infinity, inexact" {
 }
 
 test "round-toward-positive overflow is also inexact and above" {
+    try support.requireProvider();
     // tests/texpm1.c:113-121.
     const previous_emin = mpfr.minimumExponentInUse();
     const previous_emax = mpfr.maximumExponentInUse();
@@ -101,6 +106,7 @@ test "round-toward-positive overflow is also inexact and above" {
 }
 
 test "round-toward-negative overflow saturates to a finite value below the exact result" {
+    try support.requireProvider();
     // tests/texpm1.c:114-121 asserts `!MPFR_IS_INF (x) && MPFR_IS_POS (x)` and
     // `inex < 0` for this case.
     const previous_emin = mpfr.minimumExponentInUse();
@@ -134,6 +140,7 @@ test "round-toward-negative overflow saturates to a finite value below the exact
 }
 
 test "underflow with round-toward-zero yields a zero, inexact" {
+    try support.requireProvider();
     // tests/tdiv.c:931-970 with emin = -1: 2^-2 / 2 is 2^-3, far below the
     // smallest normal value, so the result truncates to zero.
     const previous_emin = mpfr.minimumExponentInUse();

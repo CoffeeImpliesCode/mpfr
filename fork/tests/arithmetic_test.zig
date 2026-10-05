@@ -17,6 +17,7 @@ const mpfr = @import("mpfr");
 const support = @import("support.zig");
 
 test "exact operands in the four basic operations" {
+    try support.requireProvider();
     {
         var accumulator = try support.exactDecimal("1.5", 200);
         defer accumulator.deinit();
@@ -64,6 +65,7 @@ test "exact operands in the four basic operations" {
 }
 
 test "in-place aliasing is allowed, as mpfr_mul(x, x, x, rnd) is" {
+    try support.requireProvider();
     // doc/mpfr.texi:876-882: MPFR allows the same variable for input and output.
     var x = try support.exactDecimal("1.5", 200);
     defer x.deinit();
@@ -77,6 +79,7 @@ test "in-place aliasing is allowed, as mpfr_mul(x, x, x, rnd) is" {
 }
 
 test "an inexact quotient reports a non-zero ternary value and the inexact flag" {
+    try support.requireProvider();
     // 1.5 / 2.5 is 3/5, whose binary expansion 0.1001100110011...b does not
     // terminate, so the result is inexact at every finite precision.
     var quotient = try support.exactDecimal("1.5", 200);
@@ -95,6 +98,7 @@ test "an inexact quotient reports a non-zero ternary value and the inexact flag"
 }
 
 test "scaling by a power of two is exact in both directions" {
+    try support.requireProvider();
     var x = try support.exactDecimal("1.5", 200);
     defer x.deinit();
 
@@ -121,6 +125,7 @@ test "scaling by a power of two is exact in both directions" {
 }
 
 test "set, setAbs and negateFrom copy a value exactly" {
+    try support.requireProvider();
     var source = try support.exactDecimal("3.75", 200);
     defer source.deinit();
 
@@ -154,6 +159,7 @@ test "set, setAbs and negateFrom copy a value exactly" {
 }
 
 test "mulF64 uses the double exactly, without a detour through the significand" {
+    try support.requireProvider();
     // This is mpfr_mul_d, which multiplies by the exact value of the double.
     var x = try support.exactDecimal("1.5", 200);
     defer x.deinit();
@@ -182,6 +188,7 @@ test "mulF64 uses the double exactly, without a detour through the significand" 
 }
 
 test "integer comparison and conversion follow the C long domain" {
+    try support.requireProvider();
     var x = try support.exactDecimal("3.75", 200);
     defer x.deinit();
 
@@ -231,6 +238,7 @@ test "integer comparison and conversion follow the C long domain" {
 }
 
 test "sqrt is exact for a perfect square and inexact otherwise" {
+    try support.requireProvider();
     {
         var x = try support.exactDecimal("2.25", 200);
         defer x.deinit();

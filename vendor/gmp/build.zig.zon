@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. mpfr's `FORK-LICENSE.md` at this repository's root records the
+// owner's authorization of that grant; the snapshot carries no GMP
+// `FORK-LICENSE.md` of its own. This is the GMP fork's file inside that
+// snapshot, and the supplier package's copy of this file carries the same
+// SPDX line.
+
 .{
     .name = .gmp,
     .version = "6.3.0",
@@ -11,6 +19,9 @@
     // assembly directories are kept so the import stays pristine, even though
     // the Zig build compiles none of them. Build output directories are
     // excluded so a normal build never contaminates a package.
+    // `Makefile.am` is listed because `build.zig` embeds it to read libgmp's
+    // own `LIBGMP_LT_CURRENT/REVISION/AGE` for the shared library's name; a
+    // fetched package that did not ship it could not resolve the embed.
     .paths = .{
         "build.zig",
         "build.zig.zon",
@@ -37,6 +48,7 @@
         "assert.c",
         "bootstrap.c",
         "compat.c",
+        "Makefile.am",
         "configure",
         "configure.ac",
         "config.in",

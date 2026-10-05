@@ -24,9 +24,65 @@
 //! integer 3 is not representable in one bit at all. The rational fixtures
 //! below therefore require at least two bits of precision, which is what their
 //! callers use.
-
+//!
+//! ## Where the provider comes from
+//!
+//! In the linked configuration the libraries are already there and every test
+//! below runs unchanged. In the runtime-loading configuration nothing is linked,
+//! so each test calls `requireProvider` before it touches MPFR: the provider is
+//! named explicitly through an environment variable, and a run that was not
+//! told which file to load fails rather than falling back to something else.
 const std = @import("std");
 const mpfr = @import("mpfr");
+
+/// The environment variable a runtime-loading build reads to find its provider.
+///
+/// A test binary cannot take a `--provider` argument: Zig's own test runner
+/// rejects any argument it does not know. So the request arrives through the
+/// environment, and a runtime-loading test run that was not told which provider
+/// to load fails instead of quietly using something else.
+pub const provider_variable = "MPFR_PROVIDER";
+
+/// Whether the provider has already been loaded in this process.
+///
+/// The loader's own rule is that a second `load` with the same request
+/// succeeds and changes nothing, so this is a shortcut rather than a
+/// requirement; it exists so that forty-odd tests each asking for the provider
+/// do not each walk the environment.
+var provider_loaded = false;
+
+/// Make the native library usable for this test, or explain that it cannot be.
+///
+/// A no-op at comptime in a linked build, where the libraries are already
+/// available and there is no provider to name. In a runtime-loading build this
+/// is the one explicit step the contract asks for: the request names a file, it
+/// is never guessed, and nothing falls back to a bundled or linked copy.
+pub fn requireProvider() !void {
+    if (comptime !mpfr.runtime_loaded) return;
+    if (provider_loaded) return;
+
+    const path = std.process.Environ.getAlloc(
+        std.testing.environ,
+        std.testing.allocator,
+        provider_variable,
+    ) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => {
+            std.debug.print(
+                "mpfr tests: this is a runtime-loading build. Export " ++
+                    "{s} with the path of a shared libmpfr whose dependency " ++
+                    "closure contains a shared libgmp, then run the tests " ++
+                    "again. Nothing is loaded by default and no other file is tried.\n",
+                .{provider_variable},
+            );
+            return error.ProviderNotConfigured;
+        },
+        else => return err,
+    };
+    defer std.testing.allocator.free(path);
+
+    try mpfr.load(.{ .path = path });
+    provider_loaded = true;
+}
 
 /// Assert that `value` renders as `want_digits` with radix exponent `want_exponent`.
 ///

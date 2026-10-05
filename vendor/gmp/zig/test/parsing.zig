@@ -2,9 +2,12 @@
 //!
 //! The accepted inputs and the failure modes are GMP's, not this package's:
 //! `mpz_set_str` accepts an optional sign, digits in the requested base, and
-//! with base 0 it also honours the `0x`, `0X`, `0b` and `0` prefixes. Anything
-//! else, including embedded whitespace, underscores and a trailing garbage
-//! character, is rejected.
+//! with base 0 it also honours the `0x`, `0X`, `0b` and `0` prefixes. White
+//! space is *not* rejected: GMP skips it before the sign and among the leading
+//! zeros (`mpz/set_str.c:65-68`, `:102-104`) and drops every white space
+//! character from the body (`:118-131`), so `" 12 "`, `"1 2"` and `"12"` are
+//! the same number. An underscore and trailing garbage are rejected, because
+//! `_` is neither a digit nor white space and `abc` is not a digit in base 10.
 
 const std = @import("std");
 const gmp = @import("gmp");

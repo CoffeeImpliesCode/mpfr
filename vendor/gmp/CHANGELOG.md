@@ -337,3 +337,24 @@ different library from the one upstream ships.
 `zig build check` now honours `-Dtarget=`: without one it still covers all six
 at once, and with one it covers only that target, so a CI failure names the
 target that failed instead of reporting one aggregate result.
+
+## 8. Zig API contract alignment — 2026-10-03
+
+**Condition.** GMP `mpf` uses limb-based precision and truncation, not MPFR
+or IEEE nearest-even rounding. Owner copies alias allocations and global
+allocator hooks govern native values and allocated strings.
+
+**Fix.** Correct precision, rounding and parsing-base descriptions. State
+single-owner/copy rules, matching native releases, string size/sentinel duties,
+input borrow fences and parse-error residue. Separate positive facade bases
+from raw negative-base features; scope allocator-hook claims to compiled
+code. Supply a complete executable module sequence without redundant linkage.
+Synchronize these authored Zig/docs into MPFR's vendored provider.
+
+**Verification and bound.** Standalone supplier, Zig 0.16.0, native Linux
+x86-64: install, Debug/ReleaseSafe tests, smoke, package consumer and module
+example pass. Compile-only `check` builds five targets and fails WASI because
+the native signal path lacks the required WASI emulation configuration.
+No native source/header, generated binding, allocator implementation or
+provenance pin changed. No system-provider result is claimed.
+

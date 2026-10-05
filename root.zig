@@ -1,9 +1,71 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
+// grant and why it matches MPFR's own primary upstream terms.
+//
 //! Zig facade over the GNU MPFR 4.2.2 public C API.
 //!
 //! This module is the `mpfr` module published by this package. It is a thin,
 //! owned wrapper: it adds Zig types and explicit ownership, and nothing else.
 //! No MPFR algorithm is reimplemented here, and the complete translated C API
 //! stays reachable through `pub const c = @import("c")`.
+//!
+//! Supported surface
+//! -----------------
+//! `Float` and `Digits` own MPFR-allocated memory and release it themselves;
+//! `Ternary`, `RoundingMode`, `Flags` and `Prefix` carry results and no
+//! resources; the module-level functions reach the library's own state.
+//! `c` is a supported route, not a private one: it keeps upstream's names,
+//! types and semantics, including the `__gmpfr_` prefixes and the `intmax_t`
+//! entry points, and a caller that uses it keeps upstream's obligations for
+//! raw pointers, flags and ownership.
+//!
+//! What this module does not do
+//! ----------------------------
+//! It chooses no rounding direction on the caller's behalf: every general
+//! operation takes its direction as an argument, and the library default is
+//! reachable only through `defaultRoundingMode`. It allocates nothing through
+//! a Zig allocator and takes no allocator argument; the memory it hands back
+//! belongs to GMP's configured allocator. Printing, the `printf`-family
+//! formatting and `mpfr_out_str`, which takes a `FILE *`, are upstream's and
+//! are reached through `c`.
+//!
+//! The shortest sequence that uses it:
+//!
+//! ```zig
+//! const std = @import("std");
+//! const mpfr = @import("mpfr");
+//!
+//! pub fn main() !void {
+//!     var x = mpfr.Float.init(200);
+//!     defer x.deinit();
+//!     try x.parseWhole("2.5", 10, .nearest_even);
+//!     var digits = try x.toDigits(10, 20, .nearest_even);
+//!     defer digits.deinit();
+//!     std.debug.print("{s}\n", .{digits.digits()});
+//! }
+//! ```
+//!
+//! State the library owns
+//! ----------------------
+//! Three channels carry state that no `Float` owns, and they are independent
+//! of one another. A call reports its rounding through the `Ternary` it
+//! returns, may raise bits through `Flags`, and consults the library default
+//! rounding direction only where upstream takes no explicit mode. No `Float`
+//! method consults that default, and no method synthesises a flag upstream
+//! does not set: `roundToPrecision` is the documented case, because
+//! `mpfr_prec_round` reports its rounding through its return value alone.
+//!
+//! Those channels are process-wide C globals in this package's own build: the
+//! configuration macros `zig/config_gen.zig` derives do not include
+//! `MPFR_USE_THREAD_SAFE`, so `MPFR_THREAD_ATTR` expands to nothing
+//! (src/mpfr-thread.h:33-43) and the flags, the exponent limits, the default
+//! precision and the default rounding direction are shared by every thread in
+//! the process (src/mpfr-impl.h:255-260, 323-325). `-Dsystem=mpfr` links an
+//! installed library instead, and `c.mpfr_buildopt_tls_p()` reports at run
+//! time whether that library keeps them per thread (src/buildopt.c). Threads
+//! that write these channels need external synchronisation; `Float` and
+//! `Digits` carry no state shared between them.
 //!
 //! Why some methods read `__mpfr_struct` fields directly
 //! ---------------------------------------------------
@@ -38,18 +100,209 @@
 //! `mpfr_free_str` releases it (doc/mpfr.texi:1201-1210, 1927-1954). Zig
 //! allocators are therefore never involved: `Float` carries no allocator and
 //! `Float.deinit` calls `mpfr_clear`, while `Digits.deinit` calls
-//! `mpfr_free_str`. MPFR's internal caches and thread-local pools are released
-//! by `freeCaches` and `cleanupMemory`.
+//! `mpfr_free_str`. A Zig leak checker does not observe either allocation, so
+//! the owning handle is the whole contract: exactly one `deinit` per successful
+//! construction, on one of the copies, never on two. MPFR's internal caches and
+//! pools are released by `freeCaches` and `cleanupMemory`.
+//!
+//! ## Two configurations: linked and runtime-loaded
+//!
+//! This module is built in one of two shapes, and `runtime_loaded` says which
+//! at comptime.
+//!
+//! *Linked* is the default. The libraries are linked, `c` is the translated
+//! header, and every call below is a direct call with no table and no check.
+//!
+//! *Runtime-loaded* is opt-in (`-Druntime=true`). Neither library is linked;
+//! `c` is a dispatch generated from the same translation step's output, and
+//! every entry point `fork/mpfr_all.h` declares is resolved through the
+//! platform loader when the caller calls
+//!
+//! ```zig
+//! try mpfr.load(.{ .path = "/usr/lib/libmpfr.so.6" });
+//! ```
+//!
+//! before using anything else. A call into a module that has not loaded stops
+//! the program with a message naming the function, in every optimization mode.
+//! That is a programming error rather than a recoverable condition: the table
+//! does not exist yet, and there is no partial state to fall back on. The load
+//! itself reports a missing file, a provider that does not export what the
+//! header declares, a provider whose limb width or configuration disagrees
+//! with the header, a request that cannot be honoured because a different
+//! provider already won, or a reentrant call, as errors rather than as a
+//! different library being loaded instead.
+//!
+//! The provider is reached, never guessed. `.path` names a file and `.system`
+//! names a library for the platform loader; neither falls back to the other,
+//! there is no unload and no reset, and the handle and a copy of the request
+//! live to the end of the process.
+//!
+//! What a provider must be is stated in `runtime/library.zig`, next to the
+//! checks that are and are not made about it.
+//!
+//! ## The external ABI boundary
+//!
+//! `c` is the whole public surface of **two** libraries, because
+//! `src/mpfr.h:52` includes `<gmp.h>`: MPFR's own entry points, the
+//! `intmax_t` family under MPFR's `__gmpfr_` spellings
+//! (`src/mpfr.h:1162-1179`), GMP's entry points, and GMP's three exported
+//! objects `__gmp_bits_per_limb`, `__gmp_errno` and `__gmp_version`
+//! (`vendor/gmp/gmp-h.in:489-497`). `mpz_t` values are part of MPFR's own API -
+//! `mpfr_set_z`, `mpfr_get_z` and `mpfr_mul_z` take them
+//! (`src/mpfr.h:487-488, 527, 544`) - so a caller that only ever touches this
+//! facade still needs the GMP closure the provider was built against.
+//!
+//! The facts a provider and this build must agree about, each with its source:
+//!
+//!   * **Limbs.** `mp_limb_t` is `GMP_LIMB_BITS` bits wide
+//!     (`vendor/gmp/gmp-h.in:44-47`), and every limb-count argument and every
+//!     significand layout depends on it.
+//!   * **Scalar widths.** `__GMP_MP_SIZE_T_INT` is defined only for CRAY
+//!     targets (`vendor/gmp/gmp-h.in:169-178`), so on every platform this
+//!     package targets `_MPFR_PREC_FORMAT` is 3 and `_MPFR_EXP_FORMAT` follows
+//!     it (`src/mpfr.h:133-143`). `mpfr_prec_t` and `mpfr_exp_t` are therefore
+//!     `long`, and `mpfr_uprec_t` and `mpfr_uexp_t` are `unsigned long`
+//!     (`src/mpfr.h:159-212`); `mpfr_sign_t` is `int` everywhere
+//!     (`src/mpfr.h:180`). That width is a separate axis from the limb width
+//!     above and does not follow from it: a 32-bit-`long` target such as
+//!     wasm32-wasi still takes its `GMP_LIMB_BITS` from GMP's own
+//!     configuration. `mpfr_rnd_t` values are fixed at
+//!     `0=RNDN, 1=RNDZ, 2=RNDU, 3=RNDD, 4=RNDA` (`src/mpfr.h:98-109`).
+//!     `mpfr_flags_t` is an `unsigned int` bit set (`src/mpfr.h:73-87`), and
+//!     this module crosses that boundary through the `MPFR_FLAGS_*` constants
+//!     rather than through a width assumption.
+//!   * **Struct layout.** `__mpfr_struct` is
+//!     `{ mpfr_prec_t _mpfr_prec; mpfr_sign_t _mpfr_sign; mpfr_exp_t _mpfr_exp;
+//!     mp_limb_t *_mpfr_d; }` (`src/mpfr.h:231-236`), and `mpfr_t` is one of
+//!     those. Four predicate and sign methods below mirror macros against those
+//!     fields, so the layout is part of this facade's own contract.
+//!   * **Configuration.** `MPFR_WANT_FLOAT128`, `MPFR_WANT_DECIMAL_FLOATS`,
+//!     `MPFR_USE_MINI_GMP` and `MPFR_USE_THREAD_SAFE` are all off, which is why
+//!     the float128 and decimal entry points are absent
+//!     (`src/mpfr.h:470-486, 530-533`), why the module comment above says the
+//!     shared state is process-wide, and why `c.mpfr_buildopt_tls_p()` is
+//!     expected to answer 0 for a library this build produced.
+//!     `MPFR_USE_INTMAX_T` is on (`fork/mpfr_all.h:51`), on both C command
+//!     lines, so the `__gmpfr_` entry points are declared *and* defined.
+//!   * **Allocator ownership.** Every allocation MPFR makes goes through GMP's
+//!     configured allocator: `mpfr_init2` through `mpfr_clear`
+//!     (doc/mpfr.texi:1201-1210) and `mpfr_get_str` through `mpfr_free_str`
+//!     (doc/mpfr.texi:1927-1954). `Float.deinit` and `Digits.deinit` below call
+//!     exactly those two release entry points, so an allocation and its release
+//!     always cross the same table, the same `libmpfr` and the same `libgmp`.
+//!     No Zig allocator is involved on either side, and no allocator in the
+//!     executable can be substituted.
 
 const std = @import("std");
 
-/// The complete translated GNU MPFR 4.2.2 public C API.
+/// The complete translated GNU MPFR 4.2.2 public C API, plus GMP's public API
+/// that `<gmp.h>` contributes.
 ///
 /// This is the raw escape hatch. Everything here follows upstream naming and
 /// semantics, including the `__gmpfr_` prefixes that MPFR's own macros impose
 /// on the `intmax_t` entry points (src/mpfr.h:1162-1169): `c.__gmpfr_set_sj`,
 /// for instance, is upstream's `mpfr_set_sj`.
+///
+/// In a runtime-loading build this module is a generated dispatch rather than
+/// the translation step's own output. It publishes the same namespace: every
+/// type and constant is re-exported from the translated header rather than
+/// restated, so `mpfr_t`, `mpfr_prec_t`, the limb pointer inside
+/// `__mpfr_struct` and every `MPFR_*` constant are the same nominal
+/// declarations in either configuration and nothing here needs a cast. What
+/// differs is how a name reaches the library: directly in the linked
+/// configuration, and through a table that `load` fills in the runtime-loaded
+/// one, where a call before that fill stops the program with a message naming
+/// the function. `runtime_loaded` says which configuration this build is.
 pub const c = @import("c");
+
+/// The loader core, which is where a linked build's two public types come from.
+///
+/// It is referenced only by the linked configuration. In a runtime-loading
+/// build the generated dispatch carries the same two declarations and this
+/// import is not even registered on the facade's module, so the name is never
+/// resolved and never compiled. Either way there is exactly one `LoadSource`
+/// and one `LoadError` in a build, which is what keeps them one type for a
+/// consumer that names them.
+const rt = @import("rt");
+
+/// Whether this module was configured to resolve its native symbols at run
+/// time.
+///
+/// False for the ordinary build, where the libraries are linked and `c` is the
+/// translated header itself. True when the build generated a dispatch that
+/// resolves the same symbols through the platform loader, in which case `load`
+/// is the call that makes them usable. It is a comptime constant, so a
+/// consumer can write two different code paths and have only the one it chose
+/// analysed.
+pub const runtime_loaded: bool = if (@hasDecl(c, "rt_runtime_loaded")) c.rt_runtime_loaded else false;
+
+/// Which native library `load` should open.
+///
+/// `.path` is an explicit file path and `.system` is an explicit name for the
+/// platform loader. There is no path-to-system fallback and no implicit
+/// fallback of any kind; a request that cannot be honoured is an error, not a
+/// different library.
+pub const LoadSource = if (runtime_loaded) c.LoadSource else rt.LoadSource;
+
+/// Every way `load` can decline.
+///
+/// Declared here, in the module a consumer imports, rather than only inside
+/// the loader: the caller names the failure it is handling.
+pub const LoadError = if (runtime_loaded) c.LoadError else rt.LoadError;
+
+/// Load the native library this module dispatches to.
+///
+/// In a runtime-loading build this is the whole contract: call it once, then
+/// use this module as if it were linked. Calling it again with the same request
+/// succeeds and changes nothing; calling it with a different request after a
+/// success is `ProviderMismatch`, and the provider already in use stays in use.
+/// A failed attempt publishes nothing and can be retried explicitly, by
+/// calling this again: there is no automatic retry, and no implicit second
+/// source.
+///
+/// The provider must be a shared `libmpfr` that depends on a shared `libgmp`,
+/// because GMP's entry points and objects are part of this module's own
+/// surface and are resolved through the provider's dependency closure. See the
+/// module comment on the external ABI boundary, and `runtime/library.zig`.
+///
+/// Safe to call from any thread. A thread that arrives while an attempt for the
+/// same request is in flight waits for that attempt and gets its result,
+/// whatever it was. A call from the thread that is running the attempt is
+/// `ReentrantLoad` rather than a deadlock.
+///
+/// In a linked build there is no provider, no table and nothing to resolve, so
+/// this stops the program with a message saying so instead of quietly
+/// succeeding. `runtime_loaded` is false there, so a consumer that supports
+/// both configurations can tell the two apart at comptime instead of meeting
+/// this at run time.
+pub fn load(source: LoadSource) LoadError!void {
+    // Both configurations are written out rather than one guarded behind the
+    // other's `noreturn`, so the branch a build does not take is never
+    // analysed: a linked build's `c` has no `load`, and a runtime-loading build
+    // has no `rt` import, and neither name is resolved in the configuration
+    // that lacks it.
+    if (comptime runtime_loaded) {
+        return c.load(source);
+    } else {
+        std.debug.panic(
+            "mpfr: load was called on a linked build; this module is not " ++
+                "runtime-loaded, so there is no library to load. Build with " ++
+                "runtime loading configured, or do not call load.",
+            .{},
+        );
+    }
+}
+
+/// The request that succeeded, or null when nothing has loaded yet.
+///
+/// The answer is the loader's own retained copy and stays valid for the life of
+/// the process. Null in a linked build, which has no request.
+pub fn loadedSource() ?LoadSource {
+    // The runtime branch keeps `c.loadedSource` inside the branch it belongs
+    // to, for the reason `load` states.
+    if (comptime runtime_loaded) return c.loadedSource();
+    return null;
+}
 
 const mpfr = c;
 
@@ -62,12 +315,12 @@ pub const Exponent = mpfr.mpfr_exp_t;
 /// A sign comparison, matching the sign part of `mpfr_cmp3`'s result.
 pub const Order = std.math.Order;
 
-/// Smallest precision MPFR accepts. Upstream `MPFR_PREC_MIN` (src/mpfr.h:173).
+/// Smallest precision MPFR accepts. Upstream `MPFR_PREC_MIN` (src/mpfr.h:176).
 pub const min_precision: Precision = 1;
 
 /// Largest precision MPFR accepts.
 ///
-/// Computed from upstream's `MPFR_PREC_MAX` (src/mpfr.h:176),
+/// Computed from upstream's `MPFR_PREC_MAX` (src/mpfr.h:177),
 /// `((mpfr_prec_t)(((mpfr_uprec_t) -1) >> 1) - 256)`, instead of read from a
 /// macro, because this facade does not rely on macro translation.
 pub const max_precision: Precision = blk: {
@@ -76,6 +329,10 @@ pub const max_precision: Precision = blk: {
 };
 
 /// Whether `precision` lies inside the range MPFR accepts for a significand.
+///
+/// `Float.init`, `Float.resetPrecision` and `Float.roundToPrecision` all
+/// require that range and cannot check it for you, so a precision that comes
+/// from outside your own code passes through this first.
 pub fn isValidPrecision(precision: Precision) bool {
     return precision >= min_precision and precision <= max_precision;
 }
@@ -140,7 +397,14 @@ pub const Ternary = enum {
     }
 };
 
-/// The calling thread's MPFR exception flags.
+/// The MPFR exception flags currently in effect.
+///
+/// They are the calling thread's only when the linked library was built
+/// thread-safe; in this package's own build they are one process-wide word, as
+/// the module comment on global state records. Reading and raising them is
+/// separate from the ternary value a call returns: a call may return
+/// `.exact` and still raise a flag, and an operation upstream does not flag
+/// raises nothing here.
 ///
 /// The field order is `MPFR_FLAGS_UNDERFLOW` through `MPFR_FLAGS_DIVBY0`, the
 /// bit set `mpfr_flags_t` (src/mpfr.h:73-87) exposes through
@@ -182,7 +446,8 @@ pub const Flags = packed struct(u6) {
         .divide_by_zero = true,
     };
 
-    /// Read the calling thread's current flags.
+    /// Read the exception flags currently in effect. See the type comment for
+    /// whether that is the calling thread's or the process's.
     pub fn read() Flags {
         return .{
             .underflow = c.mpfr_underflow_p() != 0,
@@ -229,29 +494,50 @@ pub const Flags = packed struct(u6) {
     }
 };
 
-/// A base-`base` significand produced by `mpfr_get_str`, with its exponent.
+/// A base-`base` significand produced by `Float.toDigits`, with its exponent.
 ///
-/// The buffer is allocated by MPFR through GMP's allocator, so it must be
-/// released with `deinit`, which calls `mpfr_free_str`. It is not tied to any
-/// Zig allocator.
+/// `buffer` is allocated by MPFR through GMP's configured allocator, so it is
+/// no `std.mem.Allocator`'s to free and a Zig leak checker does not see it. One
+/// successful `toDigits` produces one buffer and owes exactly one `deinit`.
+/// Zig has no move semantics, so a `Digits` copied by value aliases that same
+/// buffer: `deinit` must then be called on one copy only, and a second call,
+/// through the copy or through the original, is a double `mpfr_free_str`.
+/// `deinit` poisons only the variable it is called on, which bounds a repeat
+/// through that variable and protects no alias.
+///
+/// `Digits` holds no allocator, no borrowed state and no pointer to a `Float`;
+/// the value it renders is not kept alive by it.
 pub const Digits = struct {
     /// Significant digits, with an implicit radix point immediately to the left
     /// of the first digit, exactly as `mpfr_get_str` produces them
     /// (doc/mpfr.texi:1909-1911). A leading `-` is part of the digits.
+    ///
+    /// The bytes are writable in place, because upstream allows it as long as
+    /// the string's length is unchanged when it is freed
+    /// (doc/mpfr.texi:1950-1953) and `mpfr_free_str` frees
+    /// `strlen(str) + 1` bytes (doc/mpfr.texi:1945-1948). Editing the digits
+    /// or the sign is therefore safe; shortening the string, dropping the
+    /// sentinel or writing past it is not, and neither is changing a byte to
+    /// anything that ends the string earlier.
     buffer: [:0]u8,
     /// Position of that radix point, so the value is `0.<buffer> * base^exponent`.
     exponent: Exponent,
 
     /// The significant digits, without the sentinel.
+    ///
+    /// The slice borrows `buffer`; it stays valid until `deinit` and is not
+    /// invalidated by writes to `buffer`, which change the bytes it reads.
     pub fn digits(self: *const Digits) [:0]const u8 {
         return self.buffer;
     }
 
-    /// Release the buffer with `mpfr_free_str`.
+    /// Release the buffer with `mpfr_free_str`, exactly once.
     ///
-    /// MPFR documents that the string may be edited in place as long as its
-    /// length is unchanged when it is freed (doc/mpfr.texi:1950-1953), so this
-    /// type exposes no mutating accessors.
+    /// The value is unusable afterwards, and a second `deinit` on the same
+    /// variable is a double free; `deinit` poisons that variable, so reading it
+    /// or calling `deinit` again through it is a use of `undefined` rather than
+    /// a diagnosable error. Nothing else is released: MPFR's caches and the
+    /// GMP allocator itself are untouched.
     pub fn deinit(self: *Digits) void {
         c.mpfr_free_str(self.buffer.ptr);
         self.* = undefined;
@@ -259,6 +545,8 @@ pub const Digits = struct {
 };
 
 /// Failure of a text-to-value or value-to-text conversion.
+/// Shared vocabulary: parsing reports `InvalidNumber`, rendering `InvalidBase`.
+/// GMP allocation failure is not a recoverable conversion error.
 pub const ConversionError = error{
     /// The text is not a complete number. Two upstream entry points report the
     /// same condition and `Float` maps both here:
@@ -276,61 +564,115 @@ pub const ConversionError = error{
     /// the prefix it did parse, because `mpfr_set_str` returns -1 only after
     /// `mpfr_strtofr` has run (src/set_str.c:31-32).
     InvalidNumber,
-    /// The base was outside `0` or `2..62`, so `mpfr_get_str` did nothing and
-    /// returned a null pointer (doc/mpfr.texi:1888-1889).
+    /// The base was outside the two ranges `mpfr_get_str` accepts, `2..62` and
+    /// `-36..-2`, so it did nothing and returned a null pointer before it
+    /// allocated anything (doc/mpfr.texi:1888-1889; src/get_str.c:2611-2613).
+    /// `isValidBase` is that test; base `0` is not one of the accepted values.
     InvalidBase,
-    /// MPFR could not allocate the output string.
-    OutOfMemory,
 };
 
-/// `__MPFR_EXP_MAX` from src/mpfr.h:213, the largest `mpfr_exp_t`.
+/// `__MPFR_EXP_MAX` from src/mpfr.h:225, the largest `mpfr_exp_t`.
 const exp_max: Exponent = blk: {
     const unsigned_max: mpfr.mpfr_uexp_t = @bitCast(@as(std.meta.Int(.signed, @bitSizeOf(mpfr.mpfr_uexp_t)), -1));
     break :blk @intCast(unsigned_max >> 1);
 };
 
-/// `__MPFR_EXP_NAN` from src/mpfr.h:214.
+/// `__MPFR_EXP_NAN` from src/mpfr.h:226.
 const exp_nan: Exponent = 1 - exp_max;
-/// `__MPFR_EXP_ZERO` from src/mpfr.h:215.
+/// `__MPFR_EXP_ZERO` from src/mpfr.h:227.
 const exp_zero: Exponent = 0 - exp_max;
-/// `__MPFR_EXP_INF` from src/mpfr.h:216.
+/// `__MPFR_EXP_INF` from src/mpfr.h:228.
 const exp_inf: Exponent = 2 - exp_max;
 
 /// An arbitrary-precision floating-point value with an explicit precision.
 ///
+/// `init` is the only construction that establishes a valid value. A struct
+/// literal is reachable in Zig, so a `Float` the caller did not get from `init`
+/// holds storage upstream never initialised and is not a value MPFR can
+/// operate on. `Float.init(bits)` yields NaN at `bits` bits, and every method
+/// leaves that one value valid until `deinit`.
+///
 /// A `Float` owns exactly one upstream `mpfr_t`, whose significand is allocated
 /// by GMP's allocator. `deinit` releases it with `mpfr_clear`; MPFR keeps the
 /// same allocated space for the whole life of the variable
-/// (doc/mpfr.texi:870-874).
+/// (doc/mpfr.texi:870-874). No Zig allocator is involved, so a Zig leak checker
+/// does not observe that allocation.
 ///
 /// Zig has no move semantics, so a `Float` copied by value aliases the same
-/// limbs and `deinit` must then be called on exactly one copy. Pass `*Float`
-/// and `*const Float` rather than duplicating the value.
+/// limbs and the same allocation: `deinit` must then be called on exactly one
+/// copy, and calling it through two copies is a double `mpfr_clear`. Pass
+/// `*Float` and `*const Float` rather than duplicating the value. A pointer
+/// from `raw` or `rawConst` addresses the `Float` it was taken from, so a copy
+/// made afterwards does not move it and a copy returned in place of the
+/// original leaves it naming storage the caller no longer owns.
 pub const Float = struct {
+    /// The upstream `mpfr_t` this wrapper owns. It is a reachable field because
+    /// Zig has no private fields, so the facade's invariants are a documented
+    /// obligation rather than an enforced one. Reading `_mpfr_prec`,
+    /// `_mpfr_sign` and `_mpfr_exp` is what the classification methods do;
+    /// writing them directly is not supported and no method re-derives a value
+    /// upstream defines. Giving a second `Float` this field makes the two
+    /// values share one significand, with one `deinit` between them.
     inner: mpfr.mpfr_t,
 
-    /// Allocate a value of `precision` significand bits, initialised to NaN.
+    /// Allocate a value of `bits` significand bits, initialised to NaN.
+    ///
+    /// `bits` must lie between `min_precision` and `max_precision`; outside
+    /// that range the behaviour is undefined (doc/mpfr.texi:1359-1360), and
+    /// `mpfr_init2` checks it with `MPFR_ASSERTN (MPFR_PREC_COND (p))`
+    /// (src/init2.c:50-53). That check is not compiled out here:
+    /// `MPFR_WANT_ASSERT` is left at its default 0 (src/mpfr-impl.h:488-497),
+    /// which keeps `MPFR_ASSERTN` a live test. An out-of-range `bits` therefore
+    /// aborts the process in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall
+    /// alike, rather than being diagnosed in one mode and ignored in another,
+    /// so `isValidPrecision` is the ordinary test to run first on a precision
+    /// that came from outside your own code. Upstream also notes that MPFR
+    /// raises the precision internally for correct rounding, so a precision
+    /// near the maximum asks GMP for an allocation it cannot make
+    /// (doc/mpfr.texi:807-812).
     ///
     /// `mpfr_init2` sets the value to NaN. Prefer this over `mpfr_init` for the
-    /// reason upstream does: the process-wide default precision can be changed
-    /// by other libraries that do not restore it (doc/mpfr.texi:1409-1418).
+    /// reason upstream does: the default precision can be changed by other
+    /// libraries that do not restore it (doc/mpfr.texi:1408-1409).
+    ///
+    /// The call cannot fail, so the returned value owes exactly one `deinit`
+    /// and the `defer` belongs directly after it.
     pub fn init(bits: Precision) Float {
         var result: Float = undefined;
         c.mpfr_init2(&result.inner, bits);
         return result;
     }
 
-    /// Release the significand with `mpfr_clear`.
+    /// Release the significand with `mpfr_clear`, exactly once.
+    ///
+    /// The value is unusable afterwards, and a second `deinit` reached through
+    /// any copy is a double free. This one does not poison `self`, so a repeat
+    /// through the same variable hands freed limbs back to `mpfr_clear` with no
+    /// diagnostic in any optimize mode. Nothing else is released: MPFR's
+    /// caches and the GMP allocator are untouched.
     pub fn deinit(self: *Float) void {
         c.mpfr_clear(&self.inner);
     }
 
     /// The raw upstream destination pointer, for the escape hatch.
+    ///
+    /// The pointer is `&self.inner`, so it addresses this `Float`'s own
+    /// storage rather than the significand: it is valid from this call until
+    /// `deinit`, it is not moved by an operation on any other value, and it
+    /// says nothing about another `Float` that copied this one. It is not a
+    /// second owner, and it must not be passed to `mpfr_clear`,
+    /// `mpfr_free_cache` or anything else that ends the variable's life,
+    /// because `deinit` still owes that one `mpfr_clear`.
     pub fn raw(self: *Float) mpfr.mpfr_ptr {
         return &self.inner;
     }
 
     /// The raw upstream const pointer, for the escape hatch.
+    ///
+    /// The same borrow as `raw`, read-only: it is valid until `deinit` and it
+    /// names this `Float`'s own storage. MPFR requires an `mpfr_srcptr` for
+    /// every read-only entry point, so this is what reaches `c` methods that
+    /// take one.
     pub fn rawConst(self: *const Float) mpfr.mpfr_srcptr {
         return &self.inner;
     }
@@ -345,11 +687,17 @@ pub const Float = struct {
         return self.inner[0]._mpfr_prec;
     }
 
-    /// Reset the significand width to `precision` bits and set the value to NaN.
+    /// Reset the significand width to `bits` bits and set the value to NaN.
     ///
     /// This is `mpfr_set_prec`, whose documented contract is that the previous
     /// value is lost (doc/mpfr.texi:1499-1515). Use `roundToPrecision` to keep
     /// the value. The allocated space is reused when it is already large enough.
+    ///
+    /// `bits` must lie between `min_precision` and `max_precision`
+    /// (doc/mpfr.texi:1507-1508), the same bound `init` requires; `init` states
+    /// what an out-of-range precision does. Upstream also forbids this call on a
+    /// value built with `MPFR_DECL_INIT` or `mpfr_custom_init_set`
+    /// (doc/mpfr.texi:1512-1514), neither of which this facade constructs.
     pub fn resetPrecision(self: *Float, bits: Precision) void {
         c.mpfr_set_prec(&self.inner, bits);
     }
@@ -359,7 +707,9 @@ pub const Float = struct {
     /// This is `mpfr_prec_round` (doc/mpfr.texi:3325-3333): the significand is
     /// rounded in the direction `mode` and the precision becomes `bits`.
     /// Growing the precision zero-fills instead of rounding, so the ternary
-    /// value is then exact.
+    /// value is then exact. `bits` must lie between `min_precision` and
+    /// `max_precision` (doc/mpfr.texi:3327-3328), the bound `init` states in
+    /// full.
     ///
     /// The returned `Ternary` is the whole report of that rounding. This entry
     /// point does not raise the inexact flag: `mpfr_prec_round` returns the
@@ -755,11 +1105,25 @@ pub const Float = struct {
     /// Render `self` as `digits` significant digits in `base`, or as many digits
     /// as the current precision needs when `digits` is zero.
     ///
+    /// `base` must be in `2..62` or `-36..-2`, the two ranges `mpfr_get_str`
+    /// accepts; base `0` is not one of them. Any other value returns
+    /// `error.InvalidBase`, and `isValidBase` is that test. The digit alphabet
+    /// follows the range: `2..36` gives digits and lower-case letters,
+    /// `-36..-2` digits and upper-case letters, and `37..62` digits, upper-case
+    /// then lower-case letters in that order, so above base 10 the successor of
+    /// the digit `9` depends on the base (doc/mpfr.texi:1888-1898).
+    ///
     /// The value is rounded in the direction `mode` and the inexact flag is set
     /// exactly when the rendering is inexact, because `mpfr_get_str` has no
-    /// return channel of its own (doc/mpfr.texi:1942). Read `Flags.read()` to
-    /// see it. The result owns MPFR-allocated memory and must be released with
-    /// `Digits.deinit`.
+    /// return channel of its own (doc/mpfr.texi:1942). A NaN input renders as
+    /// `@NaN@` and also raises the NaN flag, and an infinity renders as
+    /// `@Inf@` or `-@Inf@` (doc/mpfr.texi:1900-1902); `flags()` shows either.
+    ///
+    /// On success the result owns MPFR-allocated memory and owes exactly one
+    /// `Digits.deinit`. On `error.InvalidBase` nothing was allocated.
+    /// GMP allocators must not return null (vendor/gmp/doc/gmp.texi:7487-7490);
+    /// the default allocator aborts on allocation failure. An unexpected null
+    /// result for a valid base panics in every optimization mode.
     pub fn toDigits(self: *const Float, base: c_int, digits: usize, mode: RoundingMode) ConversionError!Digits {
         // A `digits` of 0 is passed through unchanged, so MPFR chooses the
         // count itself (doc/mpfr.texi:1923-1925) and performs its own base
@@ -770,7 +1134,7 @@ pub const Float = struct {
         const buffer = c.mpfr_get_str(null, &exponent, base, digits, self.rawConst(), rnd(mode));
         if (cIsNull(buffer)) {
             if (!isValidBase(base)) return error.InvalidBase;
-            return error.OutOfMemory;
+            @panic("mpfr: mpfr_get_str returned null for a valid base");
         }
         // `mpfr_get_str` returns a NUL-terminated block, so the buffer is the
         // span up to that terminator; a bare `@ptrCast` cannot infer a length.
@@ -786,8 +1150,9 @@ pub const Prefix = struct {
     ternary: Ternary,
 };
 
-/// Whether `base` is one `mpfr_get_str` accepts: 2..62, or -2..-36 for
-/// upper-case digits (doc/mpfr.texi:1888-1898).
+/// Whether `base` is one `mpfr_get_str` accepts: `2..62`, or `-36..-2` for
+/// upper-case digits (doc/mpfr.texi:1888-1898, src/get_str.c:2611-2613).
+/// Base `0` is not among them.
 pub fn isValidBase(base: c_int) bool {
     return (base >= 2 and base <= 62) or (base >= -36 and base <= -2);
 }
@@ -823,10 +1188,13 @@ fn cIsNull(ptr: [*c]u8) bool {
     return @intFromPtr(ptr) == 0;
 }
 
-// ---- library and calling-thread state --------------------------------
+// ---- library state ---------------------------------------------------
 
 /// The MPFR version string of the linked library, e.g. `"4.2.2"`.
 /// This is `mpfr_get_version`, a real function (src/mpfr.h:389).
+///
+/// The slice borrows storage the library owns for the life of the process and
+/// is never freed; it is not a `Digits` and no allocator applies.
 pub fn version() [:0]const u8 {
     return std.mem.span(c.mpfr_get_version());
 }
@@ -835,18 +1203,22 @@ pub fn version() [:0]const u8 {
 /// file the library was built from (src/Makefile.am:108-111). The `PATCHES`
 /// file in this repository is empty at 4.2.2, so a library built from it
 /// reports `""`; in `-Dsystem=mpfr` mode the string is whatever the installed
-/// library recorded, which is why no caller may assume it is empty.
+/// library recorded, which is why no caller may assume it is empty. As with
+/// `version`, the slice borrows library storage and is never freed.
 pub fn patches() [:0]const u8 {
     return std.mem.span(c.mpfr_get_patches());
 }
 
 /// The name of the threshold-tuning case this MPFR build selected, taken from
 /// `MPFR_TUNE_CASE` in the generated `src/mparam.h` (src/mparam_h.in:26-85).
+/// As with `version`, the slice borrows library storage and is never freed.
 pub fn tuningCase() [:0]const u8 {
     return std.mem.span(c.mpfr_buildopt_tune_case());
 }
 
-/// The calling thread's exception flags.
+/// The exception flags currently in effect. Whether they are the calling
+/// thread's or the whole process's is the library's build, as the module
+/// comment on the state the library owns records.
 pub fn flags() Flags {
     return Flags.read();
 }
@@ -866,27 +1238,39 @@ pub fn clearAllFlags() void {
     c.mpfr_clear_flags();
 }
 
-/// The default precision used by `mpfr_init`; 53 bits out of the box.
+/// The default precision `mpfr_init` uses, 53 bits out of the box
+/// (doc/mpfr.texi:1466). It changes only values not yet initialised, and no
+/// `Float` method reads it.
 pub fn defaultPrecision() Precision {
     return c.mpfr_get_default_prec();
 }
 
-/// Set the default precision used by `mpfr_init`. Prefer `Float.init`, which
-/// takes an explicit precision, because other libraries can move this.
+/// Set the default precision `mpfr_init` uses. `precision` must lie between
+/// `min_precision` and `max_precision` (doc/mpfr.texi:1456-1459); it changes
+/// only values not yet initialised.
+///
+/// Prefer `Float.init`, which takes an explicit precision, because other
+/// libraries can move this and need not restore it
+/// (doc/mpfr.texi:1408-1409).
 pub fn setDefaultPrecision(precision: Precision) void {
     c.mpfr_set_default_prec(precision);
 }
 
-/// The calling thread's default rounding direction; `nearest_even` out of the box.
+/// The default rounding direction; `nearest_even` out of the box
+/// (doc/mpfr.texi:3318). No `Float` method reads it.
+/// Panics in every optimization mode if the library returns an unknown value.
 pub fn defaultRoundingMode() RoundingMode {
-    return std.enums.fromInt(RoundingMode, c.mpfr_get_default_rounding_mode()) orelse unreachable;
+    const value = c.mpfr_get_default_rounding_mode();
+    return std.enums.fromInt(RoundingMode, value) orelse
+        std.debug.panic("mpfr: invalid default rounding mode {d}", .{value});
 }
 
-/// Set the calling thread's default rounding direction.
+/// Set the default rounding direction.
 ///
 /// MPFR consults this only where a rounding direction is not passed explicitly.
 /// Every operation on `Float` takes its direction as an argument, so changing
-/// this never changes the result of a `Float` call.
+/// this never changes the result of a `Float` call. It is shared with other
+/// threads under the same rule as the flags.
 pub fn setDefaultRoundingMode(rounding: RoundingMode) void {
     c.mpfr_set_default_rounding_mode(rnd(rounding));
 }
@@ -913,33 +1297,44 @@ pub fn maximumExponent() Exponent {
     return c.mpfr_get_emax_max();
 }
 
-/// The calling thread's current smallest allowed exponent.
+/// The smallest allowed exponent currently in effect.
 pub fn minimumExponentInUse() Exponent {
     return c.mpfr_get_emin();
 }
 
-/// Set the calling thread's smallest allowed exponent. Returns `false` and
-/// leaves the range untouched when `exponent` is out of range
+/// Set the smallest allowed exponent. Returns `false` and leaves the range
+/// untouched when `exponent` is out of range
 /// (doc/mpfr.texi:3733-3755).
+///
+/// Neither setter checks that the smallest exponent stays at or below the
+/// largest: with the range inverted, producing any output value is undefined
+/// behaviour (doc/mpfr.texi:3751-3754), and the two calls can be interleaved
+/// with other threads writing the same shared state.
 pub fn setMinimumExponent(exponent: Exponent) bool {
     return c.mpfr_set_emin(exponent) == 0;
 }
 
-/// The calling thread's current largest allowed exponent.
+/// The largest allowed exponent currently in effect.
 pub fn maximumExponentInUse() Exponent {
     return c.mpfr_get_emax();
 }
 
-/// Set the calling thread's current largest allowed exponent. Returns `false`
-/// and leaves the range untouched when `exponent` is out of range.
+/// Set the largest allowed exponent. Returns `false` and leaves the range
+/// untouched when `exponent` is out of range, and see `setMinimumExponent` for
+/// the inverted-range obligation.
 pub fn setMaximumExponent(exponent: Exponent) bool {
     return c.mpfr_set_emax(exponent) == 0;
 }
 
-/// Release MPFR's per-thread constant caches and pools.
+/// Release MPFR's cached constants for the calling thread, as that thread
+/// reaches them; the caches are shared state in a build without thread-local
+/// storage, so the module comment on the state the library owns applies here
+/// too.
 ///
 /// Upstream recommends this before a thread exits, and in every thread that
 /// used MPFR before the GMP allocator is replaced (doc/mpfr.texi:1182-1226).
+/// MPFR rebuilds what it needs afterwards, so no `Float` and no `Digits` has
+/// to be released first.
 pub fn freeCaches() void {
     c.mpfr_free_cache();
 }

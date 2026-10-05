@@ -1,10 +1,24 @@
 //! Memory helpers shared by the facade types.
 //!
-//! GMP has its own allocator, replaceable by the program through
-//! `mp_set_memory_functions`. Nothing in this package replaces it, so GMP keeps
-//! using `malloc` and everything GMP allocates is released through GMP's own
-//! free function. Using a Zig allocator for GMP memory, or `free` for a Zig
-//! allocation, would be a bug in both directions.
+//! GMP has one allocator for the whole library, held in the global slots
+//! `gmp_allocate_func`, `gmp_reallocate_func` and `gmp_free_func`, and
+//! `mp_set_memory_functions` is the only thing that replaces them
+//! (`doc/gmp.texi:7440-7450`). No built library code or facade method calls
+//! the setter. The facade uses the provider's current hooks, which default to
+//! `malloc` and matching reallocation/free functions. This fork's Zig tests
+//! replace them through `zig/test/alloc_probe.c`, linked only into tests.
+//! Using a Zig allocator for GMP memory, or `free` for a Zig allocation, would
+//! be a bug in both directions.
+//!
+//! Two consequences are worth stating where they bite. First, a program that
+//! does replace the hooks changes the allocator for *every* value the facade
+//! owns, before the replacement and after it, and GMP asks for that only while
+//! no GMP object is live (`doc/gmp.texi:7448-7450`). Second, nothing here
+//! reports an allocation failure: GMP's own functions may not return `NULL`
+//! from an allocator (`doc/gmp.texi:7487-7490`) and the default one aborts
+//! instead (`memory.c:53-58`), so a native GMP block is invisible to a Zig
+//! leak oracle and an `error.OutOfMemory` in this package would promise a
+//! recovery GMP cannot perform.
 
 /// GMP's `mp_get_memory_functions`, declared under the name the library really
 /// exports.
@@ -38,7 +52,13 @@ extern fn __gmp_get_memory_functions(
 /// previously allocated block of SIZE bytes", and `gmp-impl.h` releases a NUL
 /// terminated string it allocated itself as `(*__gmp_free_func) (str, len+1)`.
 /// A replaceable allocator may keep that size, so this passes the real block
-/// size and never a placeholder such as 0.
+/// size and never a placeholder such as 0. The free function read here is the
+/// one installed right now, so a program that replaced the hooks must keep
+/// replacing them for as long as it holds blocks allocated under the old ones.
+///
+/// This is not idempotent and the value is not cleared: a second call with the
+/// same block and size is a double free, which is why every type that owns such
+/// a block states the exactly-once rule at its own `deinit`.
 ///
 /// `size_t` is `usize` in `translate-c`'s output, which is what the free
 /// function pointer above is declared with.

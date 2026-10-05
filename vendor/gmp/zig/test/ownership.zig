@@ -1,16 +1,23 @@
 //! Ownership and lifetime behaviour.
 //!
 //! GMP allocates its limb arrays and every string it hands out through its own
-//! allocator (`gmp_allocate_func`, which defaults to `malloc`). This package
-//! never installs allocator hooks, so correctness means two things:
+//! allocator (`gmp_allocate_func`, which defaults to `malloc`). No library
+//! code installs allocator hooks, so correctness means two things:
 //!
 //!   * every value the facade owns is released exactly once through GMP's own
-//!     `mpz_clear` / `mpq_clear` / `mpf_clear` path, and
+//!     `mpz_clear` / `mpq_clear` / `mpf_clear` / `gmp_randclear` path, and
 //!   * strings allocated by GMP are released with GMP's own free function,
-//!     never with a Zig allocator.
+//!     never with a Zig allocator, and with the block's real size.
+//!
+//! Zig has no move, so exactly-once is the caller's rule and not the type's: a
+//! copy made by assignment is a second name for one GMP allocation, and
+//! releasing both names is a double free. `clone`, `div`, `divexact`, `mod`,
+//! `numerator` and `denominator` are GMP's own copies into second allocations,
+//! each with its own `deinit`.
 //!
 //! The tests below observe both by counting GMP allocations on this thread
-//! through `alloc_probe.c`, which is linked into the test binary only.
+//! through `alloc_probe.c`, the one file in this tree that calls
+//! `mp_set_memory_functions`, linked into the test binary only.
 
 const std = @import("std");
 const gmp = @import("gmp");

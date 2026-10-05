@@ -45,3 +45,12 @@
 # change the package hash. Recorded as FORK-NOTES entry 11.
 /.zig-cache/
 /zig-out/
+
+# Additive, for the same reason as the two entries above: `nix build` leaves a
+# `result` symlink at the repository root, and `devenv`/direnv create their
+# state beside it. None of these is part of the package, so none is in the
+# `.paths` allowlist in build.zig.zon either. Upstream's own entries above are
+# untouched; this file may only grow.
+/result
+/.devenv*
+/.direnv*

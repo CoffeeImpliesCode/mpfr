@@ -27,6 +27,7 @@ const support = @import("support.zig");
 const binary_literal_length: usize = "0.0101010101".len;
 
 test "95 at one decimal digit follows the manual's stated tie rule" {
+    try support.requireProvider();
     var x = mpfr.Float.init(64);
     defer x.deinit();
     _ = x.setUnsigned(95, .nearest_even);
@@ -56,6 +57,7 @@ test "95 at one decimal digit follows the manual's stated tie rule" {
 }
 
 test "95 at two decimal digits is exact and raises no flag" {
+    try support.requireProvider();
     var x = mpfr.Float.init(64);
     defer x.deinit();
     _ = x.setUnsigned(95, .nearest_even);
@@ -68,6 +70,7 @@ test "95 at two decimal digits is exact and raises no flag" {
 }
 
 test "a negative value carries its sign in the digits" {
+    try support.requireProvider();
     // doc/mpfr.texi:1909-1911: the sign is part of the digit string and the
     // exponent is unchanged.
     var x = mpfr.Float.init(64);
@@ -80,6 +83,7 @@ test "a negative value carries its sign in the digits" {
 }
 
 test "a small exact value keeps the implicit-radix-point shape" {
+    try support.requireProvider();
     // 0.5 is 0.1 * 10^0, so the digit string is "5" with exponent 0.
     var half = mpfr.Float.init(64);
     defer half.deinit();
@@ -93,6 +97,7 @@ test "a small exact value keeps the implicit-radix-point shape" {
 }
 
 test "an exact power of two renders with the exponent carrying the scale" {
+    try support.requireProvider();
     // 2^10 is 0.1024 * 10^3.
     var x = mpfr.Float.init(64);
     defer x.deinit();
@@ -104,6 +109,7 @@ test "an exact power of two renders with the exponent carrying the scale" {
 }
 
 test "a NaN renders as @NaN@ and an infinity as @Inf@" {
+    try support.requireProvider();
     // doc/mpfr.texi:1900-1902.
     var nan_value = mpfr.Float.init(64);
     defer nan_value.deinit();
@@ -125,8 +131,10 @@ test "a NaN renders as @NaN@ and an infinity as @Inf@" {
 }
 
 test "an invalid base is rejected instead of silently rendering nothing" {
-    // doc/mpfr.texi:1888-1889: outside 2..62 and -2..-36 the function does
-    // nothing and immediately returns a null pointer.
+    try support.requireProvider();
+    // doc/mpfr.texi:1888-1889 and src/get_str.c:2611-2613: outside 2..62 and
+    // -36..-2 the function does nothing and immediately returns a null
+    // pointer, before it allocates anything. Base 0 is outside both ranges.
     try std.testing.expect(!mpfr.isValidBase(1));
     try std.testing.expect(!mpfr.isValidBase(63));
     try std.testing.expect(!mpfr.isValidBase(0));
@@ -142,9 +150,40 @@ test "an invalid base is rejected instead of silently rendering nothing" {
 
     try std.testing.expectError(error.InvalidBase, x.toDigits(1, 1, .nearest_even));
     try std.testing.expectError(error.InvalidBase, x.toDigits(63, 1, .nearest_even));
+
+    // Base 0 is the value the facade's error documentation used to admit and
+    // `isValidBase` has always rejected; it reaches the same refusal through
+    // the renderer. -37 is one below the floor of the negative range.
+    try std.testing.expectError(error.InvalidBase, x.toDigits(0, 1, .nearest_even));
+    try std.testing.expectError(error.InvalidBase, x.toDigits(-37, 1, .nearest_even));
+}
+
+test "a negative base renders with upper-case digits" {
+    try support.requireProvider();
+    // tests/tget_str.c:1250-1265 renders 123 in base -16 and base -17 and
+    // states the strings there, so these are upstream's own expected values
+    // rather than an independent derivation. 123 is `7B` in base 16 because
+    // 7 * 16 + 11 = 123 and `74` in base 17 because 7 * 17 + 4 = 123, with the
+    // implicit radix point before the first digit, so both carry the exponent
+    // 2. The upper-case `B` is the alphabet the negative ranges select.
+    // Upstream's fixture starts from MPFR's default precision, which is 53
+    // bits (doc/mpfr.texi:1466), and asks for as many digits as that
+    // precision needs, which is what a count of 0 does.
+    var x = mpfr.Float.init(53);
+    defer x.deinit();
+    _ = x.setUnsigned(123, .nearest_even);
+
+    mpfr.clearAllFlags();
+    try support.expectDigits(&x, -16, 0, "7B000000000000", 2, .nearest_even);
+    try support.expectFlags(mpfr.Flags.none);
+
+    mpfr.clearAllFlags();
+    try support.expectDigits(&x, -17, 0, "74000000000000", 2, .nearest_even);
+    try support.expectFlags(mpfr.Flags.none);
 }
 
 test "parseWhole accepts only a complete number" {
+    try support.requireProvider();
     // doc/mpfr.texi:1594-1609: mpfr_set_str returns 0 only when the entire
     // string up to the final null character is a valid number. Its return
     // value is a success code rather than a ternary value, so it says nothing
@@ -163,6 +202,7 @@ test "parseWhole accepts only a complete number" {
 }
 
 test "the NaN spelling takes a dummy suffix that the infinity spelling does not" {
+    try support.requireProvider();
     // src/strtofr.c:254-282 accepts "@nan@" case-insensitively and then skips an
     // optional parenthesised run of letters, digits and underscores, while the
     // "@inf@" branch at src/strtofr.c:284-301 has no such branch. mpfr_set_str
@@ -189,6 +229,7 @@ test "the NaN spelling takes a dummy suffix that the infinity spelling does not"
 }
 
 test "parsePrefix reports how much it consumed" {
+    try support.requireProvider();
     // doc/mpfr.texi:1610-1627: mpfr_strtofr points the end pointer just past
     // the valid data and returns the usual ternary value.
     var x = mpfr.Float.init(200);
@@ -206,6 +247,7 @@ test "parsePrefix reports how much it consumed" {
 }
 
 test "a parse that needs more bits than the destination reports itself inexact" {
+    try support.requireProvider();
     // 0.0101010101b is 2^-2 + 2^-4 + 2^-6 + 2^-8 + 2^-10 = 341/1024, a finite
     // binary fraction that needs ten fraction bits. At a four-bit precision the
     // significand reaches from 2^-1 down to 2^-4, so the kept part is
@@ -249,6 +291,7 @@ test "a parse that needs more bits than the destination reports itself inexact" 
 }
 
 test "base 0 auto-detects only the binary and hexadecimal prefixes" {
+    try support.requireProvider();
     // doc/mpfr.texi:1646-1650: base 0 means `0b`/`0B` selects base 2,
     // `0x`/`0X` selects base 16, and anything else is base 10. There is no
     // `0o` prefix, so "0o17" is not an octal literal here.
@@ -269,6 +312,7 @@ test "base 0 auto-detects only the binary and hexadecimal prefixes" {
 }
 
 test "a bare radix prefix stops the number after the leading zero" {
+    try support.requireProvider();
     // doc/mpfr.texi:1652-1655: if "0b", "0B", "0x" or "0X" is not followed by
     // a digit of that base, the subject sequence stops at the "0", so 0 is
     // read.
@@ -282,6 +326,7 @@ test "a bare radix prefix stops the number after the leading zero" {
 }
 
 test "a base-2 literal parses exactly and renders exactly" {
+    try support.requireProvider();
     // 0.101b is 5/8, which is exact in three bits, so the parse reports an
     // exact ternary value and raises no flag (doc/mpfr.texi:1610-1627).
     var x = try support.exactBinary("0.101", 3);

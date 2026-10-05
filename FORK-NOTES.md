@@ -96,10 +96,36 @@ other direction.
 translated Zig names carry the `__gmpfr_` prefix. The facade therefore does not
 use them, and `root.zig` documents the rename on `pub const c`.
 
+**FILE surface correction.** The private aggregate now includes `<stdio.h>`
+before MPFR/GMP headers (`src/mpfr.h:1195-1215`). Runtime generation routes
+every `mpfr_`/`__gmp` extern and keeps the target-libc externs direct; the public
+headers' actual-symbol inventory confirms both prefixes cover every provider
+symbol. No library export is optional and no native header changed.
+
+**Bounded driver observation — 2026-10-04.** The real stdio/variadic probe
+passed 16/16 `x86_64-linux-gnu` cells: linked/loaded × static/dynamic delivery
+× Debug/ReleaseSafe/ReleaseFast/ReleaseSmall. Real libc `FILE *` streams and
+stdout each received exactly `4.20e+01\n` (nine bytes) from raw
+`__gmpfr_fprintf`, with a `c_int` precision argument and an `mpfr_srcptr`.
+Passing `null` to that tested entry point terminated by native signal, not a
+typed checked error. A separate Debug linked-static `mpfr_out_str` probe
+subsequently compiled (26/26 steps) and emitted exactly
+`4.200000000000000000000000000000000000000e1` to stdout, exit 0.
+The same entry point with a null stream compiled but exited 134 in native
+`out_str.c:68` (`fputc`), with no stdout normalization. These two observations
+are separate from the 16-cell `__gmpfr_fprintf` proof, not all-mode
+`mpfr_out_str` coverage.
+All loaded cells used one existing Debug-dynamic `libmpfr.so.6.2.2` provider
+with sibling `libgmp.so.10` and `$ORIGIN` RUNPATH, not a fresh provider per mode
+or an independent external-ABI certification. Exact commands, per-row exits,
+signals and provider closure:
+`/home/tmp2/gertullj/scratch/foundation-libs/mpfr-stdio-proof/out/20261004T224515Z-69013/report.json`.
+
 **Reusable rule.** A binding must make the target's feature-macro state explicit
 rather than inheriting whatever the host toolchain happened to define.
 
-**Verification status.** Not run.
+**Original intmax preparation status.** Not run at that stage; the later stdio
+observation above is a separate, bounded result.
 
 ---
 
@@ -177,6 +203,12 @@ not in this repository. Marking it on the GMP artifact means
 `module.linkLibrary(gmp_artifact)` is enough to make the whole of libmpfr compile,
 and `mpfr_lib.installHeader(b.path("src/mpfr.h"), "mpfr.h")` is enough to make
 `dep.module("mpfr")` usable downstream with no further configuration.
+
+**Consumer recipe correction.** Importing `dep.module("mpfr")` already carries
+the linked MPFR/GMP closure. `README.zig.md` no longer links the artifact again:
+runtime imports must stay unlinked, and system MPFR exports no bundled artifact.
+Only a separate C source in a bundled, linked build should link the artifact
+for its installed header tree. `SOURCE-CONFIRMED`; execution pending.
 
 **Reusable rule.** In Zig 0.16, ship a C dependency's generated headers by marking
 them on the artifact, not by telling consumers where to look.
@@ -280,23 +312,33 @@ by any normal `zig build`, so they must be ignored by Git and must be absent fro
 the package path allowlist, or an ordinary user build would show up as a change
 to a downstream source commit.
 
-**How it is met.** Two entries are appended to upstream's `.gitignore` under a
-marked comment. Upstream's 37 existing entries are kept byte-for-byte; nothing
-is removed, and MPFR's list is an autotools artefact list that a Zig build never
+**How it is met.** Entries are appended to upstream's `.gitignore` under marked
+comments. Upstream's 37 existing lines are kept byte-for-byte; nothing is
+removed, and MPFR's list is an autotools artefact list that a Zig build never
 produces, so it stays as the upstream convention it is. A root-level ignore file
 is the only one Git reads there, and a local exclude would not travel with the
 repository, so appending is the mechanism. `zig-out` is confirmed as the install
 directory by `lib/std/Build.zig:733`; no separate `zig-pkg` entry is added, since
 the toolchain shipped here does not document one.
 
+Two further blocks were appended later, for the same reason and with the same
+marking: `/result`, which `nix build` leaves as a symlink at the repository root,
+and `/.devenv*` and `/.direnv*`, which the development environment creates beside
+it. None of the five is in `.paths` either. The carried file is 19 lines longer
+than upstream's 37, and `UPSTREAM-BASELINE.sha256` records its digest as well as
+upstream's.
+
 **Separately**, `build.zig.zon`'s `.paths` is an explicit allowlist that names
 only the build files, `fork/`, `consumer/` and upstream's own files. Neither
 directory appears there, so a user build cannot change the package hash even
 before the ignores apply.
 
-**Verification status.** Not run, and no contamination was observed: no build has
-been performed, so `.zig-cache/` and `zig-out/` do not exist in this tree. This is
-a packaging requirement, not a found bug.
+**Verification status.** The requirement holds, and it is checked rather than
+assumed: `UPSTREAM-BASELINE.sha256` records `.gitignore` as the one divergence
+from the pinned commit, with both digests, and `check-upstream-baseline.sh` fails
+if the carried file stops being exactly those 1371 bytes. Both `.zig-cache/` and
+`zig-out/` exist in this tree because builds have been run in it; neither is
+tracked, and neither is in `build.zig.zon`'s `.paths`.
 
 ---
 
@@ -381,6 +423,30 @@ exactness asks `parsePrefix` and reads the ternary MPFR actually returned, with
 full consumption checked separately. The consumer and the example now do that,
 and the tests that wanted a provably exact fixture use the same shape.
 
+**Promise withdrawn.** `ConversionError.OutOfMemory` promised recovery that
+GMP cannot provide: allocators must not return null and the default aborts
+(`vendor/gmp/doc/gmp.texi:7487-7490`; `vendor/gmp/memory.c:53-58`).
+`ConversionError` now names only `InvalidNumber` and `InvalidBase`; an
+unexpected valid-base null result panics. `defaultRoundingMode` also panics
+ordinarily for an unknown getter value without changing its return type.
+The raw-setter corruption repro is refuted by `src/set_rnd.c:30-31`; the
+unknown-getter and valid-base-null panic paths remain `SOURCE-CONFIRMED`
+obligations, not manufactured failure observations.
+
+**Bounded driver observations — 2026-10-04.** On `x86_64-linux-gnu`, native
+rounding controls (valid modes `0..5`, invalid setter `99` rejected) and
+digits controls (`42` in base 10; base 1 returns `InvalidBase`) built and ran
+with exit 0 in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall. The exhaustive
+two-tag conversion taxonomy built and ran with exit 0 in Debug. Receipts:
+`/home/tmp2/gertullj/scratch/foundation-libs/numerical-contract-probes/receipts/mpfr-valid-domain-controls/after/`,
+then `mpfr-rounding-native/<mode>/receipt.json`,
+`mpfr-digits-boundary/<mode>/receipt.json` and
+`mpfr-conversion-taxonomy/Debug/receipt.json`. Each records the exact
+`zig build -j8 --summary all -Dtarget=x86_64-linux-gnu -Doptimize=<mode>`
+argv, probe selector, external caches/prefix, environment and executed binary.
+These controls did not exercise either impossible-return panic or allocator
+failure; the raw FILE/runtime closure gates are separate.
+
 **Related.** `parseWhole` leaves `self` unspecified on failure, because
 `mpfr_set_str` returns `-1` only after `mpfr_strtofr` has already run
 (`src/set_str.c:31-32`); `parsePrefix` leaves a positive zero
@@ -454,3 +520,356 @@ leaves declarations describing entry points the linked library never exported.
 compiles and links, and the behaviour suite runs. The values themselves are
 `SOURCE-CONFIRMED` from `acinclude.m4` and the cited lines, not yet exercised by
 a green native run.
+
+## 16. A vendored provider is a licence surface, not just a build input
+
+**Symptom.** `NOTICE.md` named the vendored GMP as a dependency and recorded that
+it "retains its GNU GMP licence terms and four `COPYING*` files", and nothing
+else. Four files were named; none of them was identified, and none of them was
+distinguished from the other three. A reader could not tell which file carried
+which term, could not check that a file had not been swapped, and could not tell
+which of them travelled with an installed output.
+
+**Evidence.** GMP is dual licensed and its own snapshot says so:
+`vendor/gmp/build.zig.zon` declares `LGPL-3.0-or-later OR GPL-2.0-or-later`.
+The four files are four different documents, read from the tree:
+
+| File | Term | Bytes | SHA-256 |
+| --- | --- | --- | --- |
+| `vendor/gmp/COPYING` | GPLv3 | 35147 | `8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903` |
+| `vendor/gmp/COPYING.LESSERv3` | LGPLv3 additional permissions | 7639 | `a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c` |
+| `vendor/gmp/COPYINGv2` | GPLv2 | 18092 | `8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643` |
+| `vendor/gmp/COPYINGv3` | GPLv3 | 35150 | `e6037104443f9a7829b2aa7c5370d0789a7bda3ca65a0b904cdc0c2e285d9195` |
+
+**The finding that makes the digests worth keeping.** GMP's GPLv3 text and
+MPFR's are *different bytes*. `vendor/gmp/COPYING` is 35147 bytes with digest
+`8ceb4b9e…`; this tree's `COPYING` is 35149 bytes with digest `3972dc97…`. The
+wording differs in its FSF contact URL, `<http://fsf.org/>` against
+`<https://fsf.org/>`. The same is true of the LGPL texts, 7639 against 7652
+bytes. Two files carrying the same licence name are not interchangeable, and
+"GPL-3" is not enough to decide whether a file was replaced.
+
+**Fix.** `NOTICE.md` now names each file, its term, its size and its digest, and
+states that both projects' pairs are preserved separately. `package.nix` and
+`build.zig` install the four files into `$out/share/licenses/gmp/`, and
+`NOTICE.md` records why: the GMP artefact now ships inside this output, so its
+terms travel with it.
+
+**Rule.** A vendored dependency has two independent surfaces: its build
+interface and its licence surface. Recording only the build interface leaves
+the licence obligation unverifiable. Name every file, its term and its digest,
+and treat two same-named licences from two projects as two documents until a
+digest says they are one.
+
+**Verification status.** `SOURCE-CONFIRMED`: every size and digest above was read
+from the files. The installation into `$out` is `PENDING-VERIFICATION`; no Nix
+build has run.
+
+## 17. A dependency's allocator is not established by its version string
+
+**Symptom.** It is easy to write "MPFR 4.2.2 with GMP 6.3.0" and leave it there,
+which reads like a compatibility statement. It is not one, and the difference
+matters the moment anybody substitutes a GMP.
+
+**Evidence.** MPFR does not call an allocator; it asks GMP for one on every
+operation. `src/mpfr-gmp.c:313`, `:324` and `:335` each call
+`mp_get_memory_functions` and then call through the returned pointer. GMP's
+memory functions are process-wide state of the GMP *image* — `memory.c` and
+`mp_set_fns.c` in the snapshot — not of a header. `src/free_cache.c:77-80`
+records the consequence directly: MPFR's caches and pools are allocated with
+GMP's current allocator, so an application has to free them before calling
+`mp_set_memory_functions`.
+
+**Fix.** `NOTICE.md` and `README.md` state the binding narrowly: this package
+allocates through the allocator of the GMP image named in `UPSTREAM.md`, built
+from `vendor/gmp`. Neither records a claim for another GMP build, another GMP
+version, another allocator or another GMP ABI, and both say why a version string
+cannot establish one. The same records name the duplication hazard, because a
+consumer of `<mpfr.h>` links GMP too — `src/mpfr.h:52` includes `<gmp.h>` and
+`mpfr_t` carries `mp_limb_t` — so a process must reach exactly one GMP state.
+
+**Rule.** For a dependency reached through a hook the dependent calls on every
+operation, record the *image* the pair is bound to, never a version. Then state
+plainly which questions the record does not answer, so nobody later reads the
+silence as a compatibility claim.
+
+**Verification status.** `SOURCE-CONFIRMED` from the cited lines. That the two
+variants behave as documented is `PENDING-VERIFICATION`.
+
+## 18. A shared library on MinGW needs an export list nothing here can generate
+
+**Symptom.** The shared route is delivered for five systems and the cross matrix
+compiles six targets, so nothing about a Windows DLL stands out until a consumer
+tries to link one and finds symbols missing. There is no diagnostic at build
+time, because the build did not do anything wrong: it produced a DLL, and the
+DLL exports what the linker chose to export.
+
+**Evidence.** Three facts, each read from this tree:
+
+- **MPFR's own source text carries no export annotation.** A count of
+  `dllexport` across `src/*.c` and `src/*.h` is zero, and the four `__declspec`
+  uses there are `noreturn` (`src/mpfr-impl.h:167`), `thread`
+  (`src/mpfr-thread.h:36`) and `deprecated` (`src/mpfr.h:356`, with a comment at
+  `:363`).
+- **Its export decoration is inherited from GMP, and it does become an export
+  annotation on the shared route.** `src/mpfr.h:321-331` maps `__MPFR_DECLSPEC` to
+  `__GMP_DECLSPEC_EXPORT` when `__MPFR_WITHIN_MPFR` and `__GMP_LIBGMP_DLL` are
+  both set, and `vendor/gmp/gmp-h.in:104` defines
+  `__GMP_DECLSPEC_EXPORT` as `__declspec(__dllexport__)`, with `:123` defining
+  `__GMP_DECLSPEC` in terms of it. `__GMP_LIBGMP_DLL` is itself derived from the
+  selected linkage: `vendor/gmp/gmp-h.in:62` defines it as `@LIBGMP_DLL@`, and
+  that substitution is answered at `vendor/gmp/zig/config_gen.zig:446-450`
+  rather than at `:442`, which is the `_LONG_LONG_LIMB` case. So on
+  `x86_64-windows-gnu -Dlinkage=dynamic` MPFR's declarations are annotated, and
+  it would be wrong to say the shared route exports nothing.
+- **What is not established from source is whether that annotation is
+  sufficient for every symbol.** Upstream does not rely on it: it generates a
+  `.def` from `nm` over the objects (`vendor/gmp/ltmain.sh:4643-4665`, whose
+  `case` covers `*cygwin* | *mingw* | *cegcc*`), and Zig 0.16's build API exposes
+  no way to run that. Whether a MinGW DLL built with the annotation exports
+  everything is therefore an observation, not a deduction.
+- **Upstream produces that list explicitly.** `vendor/gmp/ltmain.sh:4643-4665`
+  runs the symbol listing through `sed` into an export list and, for
+  `*cygwin* | *mingw* | *cegcc*`, writes a `.def`. Zig 0.16's build API exposes no
+  way to run `nm` and consume its output during the build.
+
+**Why nothing was invented to fill the gap.** A hand-written `.def` that omits
+one symbol is worse than no `.def` at all: the library builds, the package
+installs, and the failure surfaces in a consumer's link with a name nobody
+connects back to this decision. A partial export list is also exactly the kind
+of thing that looks correct in review.
+
+**Fix.** None, deliberately. The position is recorded instead, in `NOTICE.md`
+("The Windows export surface is unresolved"), in `README.md` section 2, in
+`CHANGELOG.md` section 10 and in the `flake.nix` systems comment beside the
+`x86_64-windows` attribute. Each says the same three things: the shared route on
+that target is unobserved, the static route is unaffected because there is no
+export list to produce, and the fix if a gate observes a missing export is a
+generated `.def` from the build graph rather than a hand-maintained one.
+
+**Rule.** When a platform's correctness depends on a tool the build system cannot
+run, do not approximate the tool's output. Name the gap, say which targets and
+which routes it affects, and say what a later fix must be *generated* from. An
+unresolved item with a named boundary is information; an approximated artefact is
+a lie that costs someone a day.
+
+**Verification status.** `SOURCE-CONFIRMED` from the three citations above.
+`x86_64-windows-gnu -Dlinkage=dynamic` is `PENDING-VERIFICATION` and is the most
+likely failure in this delivery.
+
+## 19. A lock file can be a shipped package path and an excluded build input at once
+
+**Condition.** A package that advertises `flake.nix` through `build.zig.zon`'s
+`.paths`, in a tree that also carries a `package.nix` whose `cleanSourceWith`
+filter drops lock files. Both statements describe one tree and both are true.
+
+**Evidence.** `build.zig.zon:91-104` names `flake.lock` and states the reason for
+both halves of that decision: the lock exists and the workspace integration
+owner writes it, while `devenv.lock` is absent from this tree, and naming an
+absent path in `.paths` is a resolution failure. `package.nix:23-37` filters
+both names out of the derivation source, and its comment says why: lock files
+are inputs to the flake frontend rather than to the derivation. That holds for
+this tree — `installPhase` (`package.nix:54-68`) runs `zig build install` and
+reads no lock file at all.
+
+**What the two axes are actually asking.** "Does a package fetched by hash
+evaluate its flake reproducibly?" is answered by shipping the lock, because the
+fetched copy is what the flake frontend reads and nothing else carries the pin.
+"Does a re-lock invalidate an unchanged library build?" is answered by
+excluding it, because the lock is not an input to the compile and a change to it
+should not dirty the build hash. Reading either presence or absence as a defect
+in the other place costs a redundant re-resolve or a spurious rebuild.
+
+**Rule.** When a lock is missing from a shipped package, name it only if it
+exists. Never create a lock to make a `.paths` entry resolvable, and never remove
+an advertised Nix entry point to keep a lock out; both replace a described
+state with an invented one. The provenance record has to move with the decision:
+a lock is fork-owned, so it takes a `fork-owned-file:` line and no manifest
+digest, and the fork-owned carried-path count changes with it. Here that is 72 to
+73 (`UPSTREAM-BASELINE.sha256:112` and `:235`), while every upstream digest, the
+2810 carried paths and the single `.gitignore` divergence are untouched, because
+none of them describes a file this fork writes.
+
+**Targets bound.** Any Zig package that advertises a Nix entry point through
+`.paths`, and any Nix derivation whose source filter excludes lock files. The
+two rules are independent of each other and of the Zig build graph: no
+compiler, target or optimize mode is involved.
+
+**Verification status.** `SOURCE-CONFIRMED` from the four citations above.
+`./check-upstream-baseline.sh` has not been re-run since the classification
+changed and no build of any kind was run here, so the coverage arithmetic and
+the package resolution are `PENDING-VERIFICATION` on the driver's gates.
+
+## 20. A type pun in a vendored dependency is a source fact, not a predicted failure
+
+**Condition.** A review reads an upstream incompatible function-pointer
+conversion and the build graph that compiles it, and concludes that a consumer
+will trap. Every step of that chain is individually true: the conversion is
+undefined behaviour in C, the build emits no `-fsanitize-c` of its own, and the
+call really is indirect. The conclusion still is not established, and a chain of
+true premises is not a premise about behaviour.
+
+**Symptom.** The finding was that GMP's `printf` table cannot satisfy clang's
+C function-type instrumentation, so an mpfr consumer reaching GMP's `printf`
+family aborts at the first indirect call, `DOPRNT_FORMAT (last_fmt, last_ap)`
+at `printf/doprnt.c:612`, in every optimize mode but `Debug`. A disposable
+reproducer was prepared and the predicted failure stated in advance. Observed
+on Zig 0.16.0, `x86_64-linux-gnu`, linked route, static linkage: `Debug` exit 0
+(bg759) and `ReleaseSafe` exit 0 (bg765), both printing
+`gmp-printf-family-reached` and reporting `3 of 3 checks matched`.
+`WITHDRAWN` for the form "every release-safe MPFR `printf` consumer traps", and
+kept here together with the refutation.
+
+**Cause.** Not established, and deliberately not guessed. Neither graph sets
+`Module.sanitize_c`, which is null unless a module says otherwise and emits no
+`-fsanitize-c` flag when it is (`lib/std/Build/Module.zig:246`, `:558-562`), so
+the two packages differ only in an explicit `-fno-sanitize=function`; what that
+flag switches off in the supplier's graph, this run shows does not fire in this
+one. The supplier's receipt for its own graph is `gmp/FORK-NOTES.md` section 36
+and this run does not re-litigate it. Naming the toolchain default, the flag, or
+the source as the cause would each be a separate claim with no run behind it.
+
+**Fix.** None, on purpose. `vendor/gmp/build.zig` is unchanged. Adding the flag
+to match the supplier would switch off a check in a graph where nothing was
+observed to fail, which buys nothing established and costs real coverage, and
+whether to pay that is the driver's call rather than a worker's. The part of
+the finding that survives is recorded as a source fact in `CHANGELOG.md` section
+13: the conversion at `printf/printffuns.c:76` is undefined behaviour upstream
+and is carried byte-for-byte here, and this fork does not change it.
+
+**Rule.** Keep "this code is undefined behaviour" and "this build fails because
+of it" as two separate statements. The first is `SOURCE-CONFIRMED`, survives any
+gate, and outlives the toolchain that would have exposed it. The second needs a
+run, and when a run refutes a prediction, the prediction is withdrawn with its
+refutation rather than quietly dropped or quietly kept. When a finding is
+partly right, keep the confirmed half, bound the refuted half by exactly what
+the run covered, and list what it did not cover - the bound is what stops the
+next reader from re-generalising the sentence that was refuted.
+
+**Targets bound.** The run covers one toolchain (Zig 0.16.0 as pinned), one host
+target (`x86_64-linux-gnu`), the linked route, static linkage, and one entry
+point (`__gmp_printf`, i.e. `__gmp_fprintf_funs`) reached with a format string
+carrying no conversion. The loaded route, the shared linkage, the other four
+`doprnt_funs_t` tables, any conversion specifier, and every cross target are
+outside it. A later gate that exercises one of those may re-open the question,
+and then the right instrument is that gate, not this record.
+
+**Verification status.** `OBSERVED` for bg759 and bg765, both exit 0.
+`SOURCE-CONFIRMED` for the five conversions and for the `sanitize_c` default.
+The reproducer is disposable scratch under
+`contract-physics-lua/api-repros/mpfr/`; it pins no version, no default and no
+forwarding, so it is not proposed as a permanent test here.
+
+## 21. A file:line citation into a vendored snapshot expires when its owner edits it
+
+**Condition.** A record that cites a line inside another package's build file,
+which that package's own fork keeps editing.
+
+**Symptom.** Four pointers into `vendor/gmp` had drifted inside one table: a
+library-linkage pointer fifty lines off and describing an option as hard-coded
+after it had become declared, a header-installation pointer a hundred lines off,
+a `config_gen.zig` pointer naming the neighbouring macro case, and a
+field/assignment pair eight lines off. Every one of them still reads as
+plausible, because nothing in the record lets a reader tell `:442` from `:450`
+without opening the file. Beside them sat a factual error of the same vintage:
+two records stated that no `gmp.pc` is installed, which is false - the snapshot
+installs one at `vendor/gmp/build.zig:386-396` and this package installs another
+at `build.zig:1146-1159`.
+
+**Cause.** The cited file is not this package's to hold still. `vendor/gmp` is
+a snapshot under active fork work, and its Zig build graph gains and loses lines
+as that work lands. A pointer into it is an assertion about a file that changes
+without notice, so it decays silently and never fails anything.
+
+**Fix.** Re-read every pointer in the affected records against the file it names
+and correct it; correct the factual claim by giving the reason the build graph
+itself gives (`build.zig:1095-1097`), not the reason that was assumed. Nothing
+in the build graph changed.
+
+**Rule.** Treat "this line number looks right" as no evidence at all; only
+reading the named line is. When a record is touched, re-derive its pointers into
+files it does not own rather than assuming they held. And when a record gives a
+reason for a decision, check the reason as well as the decision - a right answer
+reached by a false premise advertises a checkable falsehood, and a reader who
+checks it stops trusting the answer too.
+
+**Targets bound.** Any record that cites another package's build file by line.
+Here it was four pointers and one claim in two files; no compiler, target or
+optimize mode is involved, and no build graph, source or native byte moved.
+
+**Verification status.** `SOURCE-CONFIRMED` for each pointer and for the
+`gmp.pc` install, by reading this tree. No build or `pkg-config` invocation was
+run, so the installed prefix's actual contents are `PENDING-VERIFICATION` on the
+driver's canonical and fetched gates.
+
+## 22. A task body runs where the caller stood, not where the SDK is
+
+**Condition.** A canonical devenv whose task bodies use relative paths, or an
+install prefix that defaults inside the checkout, entered with
+`devenv shell --from path:<sdk>` from a project directory that is not the SDK.
+
+**Symptom.** `OBSERVED` in `nix-acceptance-20261004T175328Z`:
+`devenv tasks run sdk:consumer` failed with
+`/nix/store/fsl53025k6jhr0hdanxkgsfbh4hy8fvj-sdk-consumer: line 3: cd:
+consumer: No such file or directory`
+(`nix-acceptance-evidence/20261004T175328Z/mpfr-devenv-consumer.log:20`). The
+generated wrapper is named after the task and carries the caller's working
+directory, and `mpfr-devenv-info.log:19` shows that directory is
+`…/sdks/mpfr/project`, with `DEVENV_DOTFILE` at `:17` beside it. That directory
+holds no `build.zig`, no `consumer/` and no `UPSTREAM-BASELINE.sha256`. The
+same shape would have hit every other body in this file; the consumer is only
+the one the run reached.
+
+**Cause.** Two assumptions, both false, and they are the reason the SDK's Nix
+half was the only green part of this run. First: that a task runs in the SDK.
+`devenv tasks run` and `devenv shell -- <script>` both execute in the working
+directory of whoever invoked them, so every relative path in a body resolved
+against a scratch project. Second, and worse because it is silent: that
+`$DEVENV_ROOT` is the SDK. It is the same scratch project. Reaching for it
+would have produced a different failure with the same shape — the environment
+did name a directory, just the wrong one.
+
+**Fix.** Take the root from the file that needs it. `./.` in an expression is
+relative to the file that writes it, and `builtins.toString` renders the path
+the evaluation already holds, so `pkgs.lib.escapeShellArg (builtins.toString
+./.)` is this SDK and not the caller's directory. `${./.}` is the trap next
+door: as an interpolation it copies this whole SDK — 2810 baseline records and
+the vendored GMP snapshot — into the store on every evaluation, and a task that
+had to write beside what it built could not, because the store is read-only.
+
+The second half is the same rule one level down: `zig build`'s default install
+prefix is `zig-out` in the source tree, so a bare `zig build` in a task is a
+write into the checkout, on a network mount, by a file that has no authority to
+authorise it. The installing bodies now pass `--prefix` beneath
+`$ZIG_LOCAL_CACHE_DIR`, and the consumer keeps its own `--cache-dir` under the
+same root because it is a second build root. `devenv tasks run` does not run
+`enterShell`, which the run's own log shows (`devenv:enterShell` appears in the
+shell gate and not in the task gate), so the task bodies resolve that variable
+themselves, in the same order the shell does. A host that named none of the
+three gets a stopped task, never a directory this file invented — `/tmp` is not
+an approved mount here.
+
+**Rule.** In a canonical task body, the working directory is an input the caller
+controls and the install prefix is a filesystem the caller has not necessarily
+approved: name both from something the SDK owns. `./.` in the owning file beats
+every environment variable here, including `$DEVENV_ROOT`, and
+`builtins.toString ./.` beats `${./.}`. Where a command installs or generates
+a delivered artefact, it takes `--prefix` under a caller-chosen root rather
+than the tool's in-tree default. Neither is a rule about devenv specifically;
+it is a rule about any wrapper that hands a body to someone else's shell.
+
+**Targets bound.** Any canonical devenv task or script body. Here: ten task
+bodies in one file, no names changed, no build graph, source or native byte
+moved, and the vendored GMP snapshot untouched. No compiler, target or optimize
+mode is involved.
+
+**Verification status.** The failure and the two log lines are `OBSERVED` as
+quoted; the repair is `SOURCE-CONFIRMED` by reading `devenv.nix`. Nothing was
+evaluated, built or run here, so the corrected bodies are
+`PENDING-VERIFICATION` on the driver's next canonical devenv gate for this SDK.
+
+**CI prefix correction.** The existing workflow now puts native installs under
+`$RUNNER_TEMP/mpfr-native-prefix` and runtime providers under
+`$RUNNER_TEMP/mpfr-runtime-prefix`, with every paired header, licence,
+pkg-config and provider reference redirected. Non-installing steps are unchanged.
+`SOURCE-CONFIRMED`; CI execution remains `PENDING-VERIFICATION`.

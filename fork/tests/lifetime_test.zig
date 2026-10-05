@@ -3,20 +3,30 @@
 //! These tests cover the contract a Zig caller actually depends on: what a
 //! freshly initialised `Float` holds, what `deinit` releases, that values
 //! survive a precision change that is supposed to keep them, that MPFR's caches
-//! can be released and are then rebuilt, and that the raw C escape hatch reaches
-//! the same state the facade reports.
+//! can be released and are then rebuilt, that the raw C escape hatch reaches
+//! the same state the facade reports, and that the library answering the calls
+//! is the one this header describes - its limb width through the object GMP
+//! exports, and its float128 and decimal configuration through the two
+//! `mpfr_buildopt_*` entry points that exist to report exactly that.
 //!
-//! Provenance: `mpfr_init2` sets the value to NaN (doc/mpfr.texi:1322-1330);
+//! Provenance: `mpfr_init2` sets the value to NaN and requires a precision
+//! between `MPFR_PREC_MIN` and `MPFR_PREC_MAX` (doc/mpfr.texi:1347-1361);
 //! `mpfr_set_prec` sets the value to NaN and reuses the allocation when it can
 //! (doc/mpfr.texi:1499-1515); `mpfr_prec_round` keeps the value
 //! (doc/mpfr.texi:3325-3333); `mpfr_free_cache` and `mpfr_mp_memory_cleanup`
-//! release per-thread caches and pools (doc/mpfr.texi:1182-1226).
+//! release the cached constants and pools (doc/mpfr.texi:1182-1226);
+//! `GMP_NUMB_BITS` is `GMP_LIMB_BITS - GMP_NAIL_BITS`
+//! (vendor/gmp/gmp-h.in:44-47) and `__gmp_bits_per_limb` is GMP's own exported
+//! object (vendor/gmp/mp_bpl.c:32); the two `mpfr_buildopt_*` answers follow
+//! from `MPFR_WANT_FLOAT128` and `MPFR_WANT_DECIMAL_FLOATS`
+//! (src/buildopt.c:35-53, src/mpfr.h:470-486, 530-533).
 
 const std = @import("std");
 const mpfr = @import("mpfr");
 const support = @import("support.zig");
 
 test "a freshly initialised value holds NaN at the requested precision" {
+    try support.requireProvider();
     const precisions = [_]mpfr.Precision{ 1, 2, 24, 53, 64, 200, 1024 };
     for (precisions) |precision| {
         var x = mpfr.Float.init(precision);
@@ -29,6 +39,7 @@ test "a freshly initialised value holds NaN at the requested precision" {
 }
 
 test "a value's precision can be raised and lowered through exact work" {
+    try support.requireProvider();
     // Bounded, consumer-visible precision behaviour. Nothing here instantiates
     // MPFR_PREC_MAX: on LP64 that is about 2^63 bits, which would ask GMP for an
     // impossible allocation. The largest precision used anywhere in this suite
@@ -75,6 +86,7 @@ test "a value's precision can be raised and lowered through exact work" {
 }
 
 test "a value survives the precision change that is meant to keep it" {
+    try support.requireProvider();
     var x = try support.seventh(53);
     defer x.deinit();
     try support.expectDigits(&x, 10, 20, "14285714285714284921", 0, .nearest_even);
@@ -94,6 +106,7 @@ test "a value survives the precision change that is meant to keep it" {
 }
 
 test "the raw C escape hatch reaches the same value the facade reports" {
+    try support.requireProvider();
     var x = try support.exactDecimal("1.0625", 200);
     defer x.deinit();
 
@@ -108,6 +121,7 @@ test "the raw C escape hatch reaches the same value the facade reports" {
 }
 
 test "caches and pools can be released and are rebuilt afterwards" {
+    try support.requireProvider();
     var x = try support.exactDecimal("3.0625", 200);
     defer x.deinit();
     _ = x.sqrt(.nearest_even);
@@ -128,6 +142,7 @@ test "caches and pools can be released and are rebuilt afterwards" {
 }
 
 test "flags can be raised, lowered and cleared individually" {
+    try support.requireProvider();
     defer mpfr.clearAllFlags();
 
     mpfr.clearAllFlags();
@@ -155,4 +170,39 @@ test "flags can be raised, lowered and cleared individually" {
 
     mpfr.clearAllFlags();
     try std.testing.expectEqual(mpfr.Flags.none, mpfr.flags());
+}
+
+test "the provider's exported limb width is the one this header describes" {
+    try support.requireProvider();
+
+    // `GMP_NUMB_BITS` is `GMP_LIMB_BITS - GMP_NAIL_BITS` from the translated
+    // gmp.h (`vendor/gmp/gmp-h.in:44-47`), and `GMP_NAIL_BITS` is 0 in every
+    // configuration GMP ships. `__gmp_bits_per_limb` is the object GMP itself
+    // exports (`vendor/gmp/mp_bpl.c:32`), under the name gmp.h gives it
+    // (`vendor/gmp/gmp-h.in:489-490`).
+    //
+    // In a runtime-loading build this reads the provider's own object through
+    // the generated address accessor rather than a copy of its value; in a
+    // linked build the declaration *is* the object. Both shapes answer the same
+    // question, and a mismatch here is the failure that would otherwise show
+    // up much later as a misread significand.
+    const provider_limb_bits: c_int = if (comptime mpfr.runtime_loaded)
+        mpfr.c.__gmp_bits_per_limbAddr().*
+    else
+        mpfr.c.__gmp_bits_per_limb;
+    try std.testing.expectEqual(@as(c_int, mpfr.c.GMP_NUMB_BITS), provider_limb_bits);
+
+    // Both answers are off, which is exactly why the translated header declares
+    // none of the float128 or decimal entry points (`src/mpfr.h:470-486,
+    // 530-533`). A provider that answered otherwise would be describing a
+    // different library from the one these declarations came from.
+    try std.testing.expectEqual(@as(c_int, 0), mpfr.c.mpfr_buildopt_float128_p());
+    try std.testing.expectEqual(@as(c_int, 0), mpfr.c.mpfr_buildopt_decimal_p());
+
+    // `mpfr_prec_t` and `mpfr_exp_t` are `long` on every platform this package
+    // targets, and the facade's `Precision` and `Exponent` are those types
+    // unchanged, so what a caller sees is the target's `long` and nothing
+    // else.
+    try std.testing.expectEqual(@bitSizeOf(c_long), @bitSizeOf(mpfr.Precision));
+    try std.testing.expectEqual(@bitSizeOf(c_long), @bitSizeOf(mpfr.Exponent));
 }

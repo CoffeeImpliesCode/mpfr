@@ -1,3 +1,8 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
+# grant and why it matches MPFR's own primary upstream terms.
+
 # Verification for the CoffeeImpliesCode/mpfr fork.
 #
 # This workflow belongs to this fork only. GNU MPFR ships no CI configuration in
@@ -8,11 +13,15 @@
 # that exists in build.zig or consumer/build.zig; that is a claim about the
 # commands, not a claim that any of them has succeeded.
 #
-# Depends on a vendored GMP. `vendor/gmp` is this workspace's verified GMP
-# package, copied in on 2026-10-01 and byte-identical to it apart from build
-# outputs; UPSTREAM.md, "Vendored GMP provider", records its identity and the
-# command that compared the two. Each of the native, check, matrix and consumer
-# jobs still tests the precondition first and names the cause, so a snapshot
+# Depends on a vendored GMP. `vendor/gmp` is this workspace's GMP package,
+# copied in on 2026-10-01; UPSTREAM.md, "Vendored GMP provider", records its
+# identity and every comparison run against the supplier package. The latest,
+# on 2026-10-04, reports 26 differing paths and 14 paths the supplier has and
+# the snapshot does not, all of them fork-authored build, packaging or
+# provenance files: the supplier moved ahead, and UPSTREAM.md classifies each
+# one. This file does not run that comparison and does not certify identity.
+# Each of the native, check, matrix and consumer jobs still tests the
+# precondition first and names the cause, so a snapshot
 # that goes missing fails as a missing provider rather than as a bare
 # path-dependency error from inside the build. The licence-and-provenance job
 # requires the snapshot to be committed and to carry GMP's own COPYING* files,
@@ -20,19 +29,33 @@
 #
 # Gates:
 #   * native build, the behaviour suite and the smoke example, in Debug and in
-#     ReleaseSafe;
-#   * a compile-only native `check`, and `check -Dtarget=` for the six required
-#     targets. `zig build matrix` is the one-shot form of those six and covers
-#     the same list; one job per target is used here so a failure names the
-#     target that failed. No step here runs a target binary.
+#     ReleaseSafe, for both linkages: the default `-Dlinkage=static` and the
+#     shared `-Dlinkage=dynamic` route, which also builds the vendored GMP
+#     shared and therefore changes the `__GMP_LIBGMP_DLL` that MPFR's own
+#     headers read. The installed prefix is checked file by file, so a
+#     half-installed closure fails here instead of at a consumer's link step;
+#   * a compile-only native `check` in both linkages, and
+#     `check -Dtarget=` for the six required targets in both linkages.
+#     `zig build matrix` is the one-shot form of those six at the selected
+#     linkage; one job per target is used here so a failure names the target
+#     that failed. No step here runs a target binary.
 #   * the consumer package, which reaches the module through
-#     `b.dependency("mpfr", ...).module("mpfr")` and a relative `.path`;
+#     `b.dependency("mpfr", ...).module("mpfr")` and a relative `.path`, run
+#     twice: once on the linked route, and once through `-Druntime=true` with
+#     the installed shared libmpfr named as the provider. Both are real runs,
+#     and the second one fails at load if the provider's libgmp sibling is not
+#     beside it.
 #   * a licence and provenance integrity gate, so a rebase cannot quietly drop
 #     upstream's terms, the pinned-release record, or a byte of upstream source.
 #
 # The provenance job checks out the full history on purpose: the integrity gate
 # is `git diff` against the pinned upstream commit, that commit is an ancestor of
 # this fork's, and a default depth-1 checkout cannot resolve it.
+#
+# It also runs `./check-upstream-baseline.sh`, the per-file SHA-256 record in
+# `UPSTREAM-BASELINE.sha256`. That gate covers the vendored GMP snapshot, which
+# `git diff` against the MPFR commit cannot see at all, and it is derived from
+# the pinned upstream sources rather than from this working tree.
 
 name: verify
 
@@ -46,12 +69,13 @@ env:
 
 jobs:
   native:
-    name: native build, test, smoke (${{ matrix.optimize }})
+    name: native build, test, smoke (${{ matrix.optimize }}, ${{ matrix.linkage }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         optimize: [Debug, ReleaseSafe]
+        linkage: [static, dynamic]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,17 +94,59 @@ jobs:
           fi
 
       - name: build
-        run: zig build -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+        # This step is the install step, and Zig's own default install prefix is
+        # `zig-out` inside the checkout. The prefix is the runner's ephemeral
+        # scratch directory instead, so the installed closure lands outside the
+        # source tree and the step below reads it from where it was written.
+        run: zig build -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} --prefix "$RUNNER_TEMP/mpfr-native-prefix" $ZIG_FLAGS
+
+      - name: the installed prefix is closed
+        run: |
+          set -eu
+          # Everything a consumer of this prefix needs, and nothing that only a
+          # static-only build could provide. The GMP half is not optional: a
+          # shared libmpfr has a DT_NEEDED on libgmp and a static one leaves
+          # every GMP reference to the consumer.
+          test -f "$RUNNER_TEMP/mpfr-native-prefix/lib/pkgconfig/mpfr.pc"
+          grep -q '^Libs: -L${libdir} -lmpfr -lgmp$' "$RUNNER_TEMP/mpfr-native-prefix/lib/pkgconfig/mpfr.pc"
+          grep -q "^Version: $(cat VERSION)$" "$RUNNER_TEMP/mpfr-native-prefix/lib/pkgconfig/mpfr.pc"
+          for f in mpfr.h mpf2mpfr.h gmp.h gmp-mparam.h gmp_all.h; do
+            test -f "$RUNNER_TEMP/mpfr-native-prefix/include/$f" || { echo "::error::missing installed header $f" >&2; exit 1; }
+          done
+          for f in COPYING COPYING.LESSER NOTICE.md FORK-LICENSE.md UPSTREAM.md README.upstream.md; do
+            test -f "$RUNNER_TEMP/mpfr-native-prefix/share/licenses/mpfr/$f" || { echo "::error::missing installed MPFR licence or record $f" >&2; exit 1; }
+          done
+          for f in COPYING COPYING.LESSERv3 COPYINGv2 COPYINGv3; do
+            test -f "$RUNNER_TEMP/mpfr-native-prefix/share/licenses/gmp/$f" || { echo "::error::missing GMP licence $f" >&2; exit 1; }
+          done
+          case "${{ matrix.linkage }}" in
+            static)
+              test -f "$RUNNER_TEMP/mpfr-native-prefix/lib/libmpfr.a"
+              test -f "$RUNNER_TEMP/mpfr-native-prefix/lib/libgmp.a"
+              ;;
+            dynamic)
+              # The name and the soname are libtool's, from
+              # libmpfr_la_LDFLAGS = ... -version-info 8:2:2 in src/Makefile.am.
+              test -f "$RUNNER_TEMP/mpfr-native-prefix/lib/libmpfr.so.6.2.2"
+              test -e "$RUNNER_TEMP/mpfr-native-prefix/lib/libmpfr.so.6"
+              test -L "$RUNNER_TEMP/mpfr-native-prefix/lib/libmpfr.so"
+              ls "$RUNNER_TEMP/mpfr-native-prefix/lib"/libgmp.so.*
+              ;;
+          esac
 
       - name: test
-        run: zig build test -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+        run: zig build test -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} $ZIG_FLAGS
 
       - name: smoke
-        run: zig build smoke -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+        run: zig build smoke -Doptimize=${{ matrix.optimize }} -Dlinkage=${{ matrix.linkage }} $ZIG_FLAGS
 
   check:
     name: check (compile only, nothing runs)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        linkage: [static, dynamic]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,14 +165,15 @@ jobs:
           fi
 
       - name: compile the facade, the behaviour suite and the example
-        run: zig build check $ZIG_FLAGS
+        run: zig build check -Dlinkage=${{ matrix.linkage }} $ZIG_FLAGS
 
   matrix:
-    name: check ${{ matrix.target }} (compile only)
+    name: check ${{ matrix.target }}, ${{ matrix.linkage }} (compile only)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        linkage: [static, dynamic]
         target:
           - x86_64-linux-gnu
           - aarch64-linux-gnu
@@ -135,8 +202,11 @@ jobs:
         # wasm32-wasi inherits GMP's documented boundary: the vendored
         # invalid.c raises SIGFPE and wasi-libc has no signals. Keep the
         # attempt visible rather than dropping the target or faking raise().
+        # The shared route is compiled for wasm too and inherits the same
+        # exception rather than being excluded: no cell of this matrix is
+        # silently dropped.
         continue-on-error: ${{ matrix.target == 'wasm32-wasi' }}
-        run: zig build check -Dtarget=${{ matrix.target }} $ZIG_FLAGS
+        run: zig build check -Dtarget=${{ matrix.target }} -Dlinkage=${{ matrix.linkage }} $ZIG_FLAGS
 
   consumer:
     name: downstream consumer package
@@ -153,14 +223,45 @@ jobs:
       - name: the vendored GMP snapshot is present
         run: |
           set -eu
-          if [ ! -f ../vendor/gmp/build.zig.zon ]; then
-            echo "::error::vendor/gmp/build.zig.zon is missing. The consumer depends on .. by relative path, so it needs the same provider. See UPSTREAM.md, 'Vendored GMP provider'." >&2
+          # This step runs at the repository root, so the snapshot is at
+          # `vendor/gmp`, not at `../vendor/gmp`. A path one level above the
+          # checkout is never the provider, so a check written against it can
+          # never fail and is not a check.
+          if [ ! -f vendor/gmp/build.zig.zon ]; then
+            echo "::error::vendor/gmp/build.zig.zon is missing. The consumer reaches the fork by relative path, so it needs the same provider. See UPSTREAM.md, 'Vendored GMP provider'." >&2
             exit 1
           fi
 
       - name: run the consumer
         working-directory: consumer
         run: zig build run -j8 --summary all --cache-dir .zig-cache
+
+      - name: install the shared libraries the runtime route loads
+        # The same rule as the native job's build step: an explicit `install`
+        # still takes Zig's in-tree `zig-out` default unless it is told
+        # otherwise. The provider the next two steps name has to be the one this
+        # step wrote, so all three use this one prefix.
+        run: zig build -Dlinkage=dynamic -Druntime=true install --prefix "$RUNNER_TEMP/mpfr-runtime-prefix" $ZIG_FLAGS
+
+      - name: the runtime route's provider is the one just installed
+        run: |
+          set -eu
+          # libgmp has to be libmpfr's sibling. libmpfr records $ORIGIN and
+          # resolves its own DT_NEEDED on libgmp.so.10 through it, so a
+          # provider installed without libgmp beside it fails when load opens
+          # it, not when the consumer links.
+          test -f "$RUNNER_TEMP/mpfr-runtime-prefix/lib/libmpfr.so.6.2.2" || {
+            echo "::error::$RUNNER_TEMP/mpfr-runtime-prefix/lib/libmpfr.so.6.2.2 is missing; the runtime consumer has no provider" >&2
+            exit 1
+          }
+          ls "$RUNNER_TEMP/mpfr-runtime-prefix/lib"/libgmp.so.*
+
+      - name: run the consumer through the runtime route
+        working-directory: consumer
+        run: |
+          set -eu
+          zig build run -Druntime=true -j8 --summary all --cache-dir .zig-cache -- \
+            --provider "$RUNNER_TEMP/mpfr-runtime-prefix/lib/libmpfr.so.6.2.2"
 
   licence-and-provenance:
     name: licence and provenance integrity
@@ -235,15 +336,31 @@ jobs:
             exit 1
           fi
 
+      - name: every carried upstream byte matches the recorded baseline
+        run: |
+          set -eu
+          # UPSTREAM-BASELINE.sha256 is the per-file SHA-256 record of every
+          # upstream byte this package carries: all 654 paths GNU MPFR 4.2.2
+          # tracks at the pinned commit, and all 2156 files of the GNU MP
+          # 6.3.0 snapshot under vendor/gmp/. Every digest in it was taken
+          # from the pinned upstream sources and not from this working tree.
+          # It is a second gate rather than a restatement of the step above
+          # because that step cannot see vendor/gmp at all: the snapshot is
+          # another package's tree, so "differs from the MPFR commit" says
+          # nothing about whether it still matches GMP 6.3.0, and it is where
+          # the native dependency this package links against actually lives.
+          ./check-upstream-baseline.sh
+
       - name: the vendored GMP snapshot, when present, is committed and carries its own terms
         run: |
           set -eu
-          # Before the provider lands this directory does not exist and these
-          # checks are skipped rather than reported as satisfied. Once it
-          # exists it must be a committed part of this package, not a local
-          # leftover, and it must carry GMP's own licence files with it.
+          # The provider is part of this package. The guard stays because a
+          # fresh clone that could not resolve the .path dependency must fail
+          # as a missing provider with a named cause, and a checkout that
+          # lacks the directory entirely is still worth reporting as such
+          # rather than passing silently on the tests that follow.
           if [ ! -e vendor/gmp ]; then
-            echo "::notice::vendor/gmp is not present yet; the provider is pending. See UPSTREAM.md, 'Vendored GMP provider'."
+            echo "::notice::vendor/gmp is absent from this checkout; the default route cannot resolve its GMP dependency. See UPSTREAM.md, 'Vendored GMP provider'."
             exit 0
           fi
           test -f vendor/gmp/build.zig.zon || {

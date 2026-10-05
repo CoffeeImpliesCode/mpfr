@@ -178,11 +178,11 @@ test "floating point arithmetic is exact where binary allows it" {
     sum.add(&a, &b);
 
     var buf: [32]u8 = undefined;
-    // 0.1 and 0.2 have no exact binary representation, so the sum is the
-    // correctly rounded value a shade above 0.3. Its first ten significant
-    // digits are 3000000000, of which `mpf_get_str` returns the significant
-    // ones only, with no radix point, so the text is "3" and a value between
-    // 0.1 and 1 has exponent 0.
+    // 0.1 and 0.2 have no exact binary representation, so at 256 bits each they
+    // sit a shade off their decimal values and the truncated sum lands a shade
+    // above 0.3. Its first ten significant digits are 3000000000, of which
+    // `mpf_get_str` returns the significant ones only, with no radix point, so
+    // the text is "3" and a value between 0.1 and 1 has exponent 0.
     const rendered = try sum.writeTo(&buf, 10, 10);
     try expectEqualStrings("3", rendered.text);
     try expectEqual(@as(i64, 0), rendered.exponent);

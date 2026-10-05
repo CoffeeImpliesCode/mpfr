@@ -53,6 +53,7 @@ const Rounding = struct {
 };
 
 test "2.5 at two bits: the manual's own ties-to-even example" {
+    try support.requireProvider();
     const cases = [_]Rounding{
         .{ .mode = .nearest_even, .want = 2.0, .want_inexact = .below },
         .{ .mode = .toward_zero, .want = 2.0, .want_inexact = .below },
@@ -77,6 +78,7 @@ test "2.5 at two bits: the manual's own ties-to-even example" {
 }
 
 test "3.5 at two bits: ties-to-even rounds up when the lower neighbour is odd" {
+    try support.requireProvider();
     const cases = [_]Rounding{
         .{ .mode = .nearest_even, .want = 4.0, .want_inexact = .above },
         .{ .mode = .toward_zero, .want = 3.0, .want_inexact = .below },
@@ -100,6 +102,7 @@ test "3.5 at two bits: ties-to-even rounds up when the lower neighbour is odd" {
 }
 
 test "0.75 at one bit: directed rounding is symmetric in the sign" {
+    try support.requireProvider();
     const cases = [_]Rounding{
         .{ .mode = .nearest_even, .want = 1.0, .want_inexact = .above },
         .{ .mode = .toward_zero, .want = 0.5, .want_inexact = .below },
@@ -123,6 +126,7 @@ test "0.75 at one bit: directed rounding is symmetric in the sign" {
 }
 
 test "-0.75 at one bit: the same neighbours seen from below zero" {
+    try support.requireProvider();
     const cases = [_]Rounding{
         .{ .mode = .nearest_even, .want = -1.0, .want_inexact = .below },
         .{ .mode = .toward_zero, .want = -0.5, .want_inexact = .above },
@@ -146,6 +150,7 @@ test "-0.75 at one bit: the same neighbours seen from below zero" {
 }
 
 test "1/3 at two bits is not a tie: 0.375 is the nearer neighbour" {
+    try support.requireProvider();
     const cases = [_]Rounding{
         .{ .mode = .nearest_even, .want = 0.375, .want_inexact = .above },
         .{ .mode = .toward_zero, .want = 0.25, .want_inexact = .below },
@@ -169,6 +174,7 @@ test "1/3 at two bits is not a tie: 0.375 is the nearer neighbour" {
 }
 
 test "1/7 at 24 bits: the exact neighbours and their decimal renderings" {
+    try support.requireProvider();
     // 1/7 is 0.001001001001...b. Truncating that at 24 bits gives
     // 2396745 * 2^-24, and the next 24-bit value is 2396745 * 2^-24 + 2^-26.
     // The unit of that significand is 2^-26, not 2^-24, because 1/7 lies in
@@ -212,8 +218,9 @@ test "1/7 at 24 bits: the exact neighbours and their decimal renderings" {
 }
 
 test "an explicit rounding mode wins over the process-wide default" {
+    try support.requireProvider();
     // Every Float operation passes its direction explicitly, so MPFR's
-    // per-thread default (src/mpfr.h:409-410) has no effect on any of them.
+    // process-wide default (src/mpfr.h:409-410) has no effect on any of them.
     const previous = mpfr.defaultRoundingMode();
     defer mpfr.setDefaultRoundingMode(previous);
 
@@ -244,6 +251,7 @@ test "an explicit rounding mode wins over the process-wide default" {
 }
 
 test "rounding to nearest, ties away from zero, differs from ties to even" {
+    try support.requireProvider();
     // src/mpfr.h:913: `mpfr_round(a,b)` is `mpfr_rint(a, b, MPFR_RNDNA)`, the
     // only supported way to reach MPFR_RNDNA. Each value is held exactly at
     // 200 bits, so the tie is real rather than a rounding artefact.
@@ -285,6 +293,7 @@ test "rounding to nearest, ties away from zero, differs from ties to even" {
 }
 
 test "truncate, ceil and floor agree with the directed modes" {
+    try support.requireProvider();
     // Each rounding gets its own copy of the value. Rounding in place would
     // leave the next call with an integer, which is already its own nearest
     // integer, so it would report an exact ternary value rather than the
@@ -321,6 +330,7 @@ test "truncate, ceil and floor agree with the directed modes" {
 }
 
 test "binary arithmetic reports the same ternary contract as conversion" {
+    try support.requireProvider();
     // The directed-rounding rules apply to arithmetic too, not only to
     // precision reduction. Each direction below starts from a freshly built
     // 1 + 2^-200, which is exact at the 201 bits its helper allocates, so
@@ -362,6 +372,7 @@ test "binary arithmetic reports the same ternary contract as conversion" {
 }
 
 test "one tie, two entry points, two different exception words" {
+    try support.requireProvider();
     // 2.5 at two bits is the manual's own example (doc/mpfr.texi:929-933), and
     // the same rounding is reachable through two entry points that disagree
     // about the exception word. Each operand is exact at 200 bits, so the

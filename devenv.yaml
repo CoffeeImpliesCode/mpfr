@@ -1,0 +1,12 @@
+# devenv input for the MPFR Zig SDK.
+#
+# A fixed revision, not a branch, so the environment does not drift between two
+# clones. `devenv.lock` records the resolved node set and belongs to whoever
+# owns locks in this workspace; this file names the input and nothing else.
+#
+# The flake in this repository is a separate, independent pin and is not
+# expected to resolve to the same nixpkgs. `flake.nix` names
+# github:NixOS/nixpkgs/c7def046b9a883d46974757852106483d741586f on purpose.
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/c2f38fe7f9e04d9aadd354d380f2bd40531d9737

@@ -32,6 +32,7 @@ const mpfr = @import("mpfr");
 const support = @import("support.zig");
 
 test "1/3 is inexact at every precision that represents 3 exactly" {
+    try support.requireProvider();
     for ([_]mpfr.Precision{ 2, 3, 8, 24, 53, 64, 113, 200, 512 }) |precision| {
         // `div` writes the quotient back into the value it is called on, so
         // the numerator below is the value that ends up holding 1/3.
@@ -59,6 +60,7 @@ test "1/3 is inexact at every precision that represents 3 exactly" {
 }
 
 test "one bit cannot hold 3, so the one-bit quotient is exact" {
+    try support.requireProvider();
     // The one-bit values around 3 are 2 = 0.1b * 2^2 and 4 = 0.1b * 2^3, so 3
     // sits exactly halfway between them. src/round_raw_generic.c:46-49 says a
     // one-bit precision resolves such a tie away from zero rather than to an
@@ -83,6 +85,7 @@ test "one bit cannot hold 3, so the one-bit quotient is exact" {
 }
 
 test "a power of two is exact and integral at every precision" {
+    try support.requireProvider();
     // 2^100 needs a single significand bit, so it is exact everywhere, and its
     // exact decimal expansion 1267650600228229401496703205376 has 31 digits.
     for ([_]mpfr.Precision{ 1, 2, 53, 64, 200, 1000 }) |precision| {
@@ -103,6 +106,7 @@ test "a power of two is exact and integral at every precision" {
 }
 
 test "resetPrecision discards the value, exactly as mpfr_set_prec does" {
+    try support.requireProvider();
     // doc/mpfr.texi:1499-1515.
     var x = try support.seventh(200);
     defer x.deinit();
@@ -117,6 +121,7 @@ test "resetPrecision discards the value, exactly as mpfr_set_prec does" {
 }
 
 test "roundToPrecision keeps the value and zero-fills when widening" {
+    try support.requireProvider();
     // doc/mpfr.texi:3325-3333: the precision grows without rounding, so the
     // ternary value is exact and the rendered digits are unchanged.
     var x = try support.seventh(24);
@@ -142,6 +147,7 @@ test "roundToPrecision keeps the value and zero-fills when widening" {
 }
 
 test "1/7 gains accuracy as the precision grows" {
+    try support.requireProvider();
     const cases = [_]struct {
         precision: mpfr.Precision,
         want_digits: [:0]const u8,
@@ -162,6 +168,7 @@ test "1/7 gains accuracy as the precision grows" {
 }
 
 test "1/3 at 200 bits renders 60 decimal digits" {
+    try support.requireProvider();
     // 1/3 is 2/3 scaled by two, that is 0.101010...b in significand form, so
     // its 200-bit significand ends on a zero bit with a one behind it. That
     // remainder is more than half the last bit, so round-to-nearest moves the
@@ -182,6 +189,7 @@ test "1/3 at 200 bits renders 60 decimal digits" {
 }
 
 test "a double is exact once the precision reaches 53 bits" {
+    try support.requireProvider();
     // Every finite f64 is representable in 53 significand bits, so 0.1 is exact
     // at 53 and at 200 bits, and inexact at 4 bits.
     var wide = mpfr.Float.init(200);
@@ -198,6 +206,7 @@ test "a double is exact once the precision reaches 53 bits" {
 }
 
 test "6.75 at two bits is not a tie, so the nearer neighbour 6 wins" {
+    try support.requireProvider();
     // 6.75 is 110.11b. At two bits the neighbours are 110b = 6 and 1000b = 8.
     // 6.75 sits 0.75 above 6 and 1.25 below 8, so this is not a tie and
     // round-to-nearest goes down. The directed modes still split.
@@ -227,6 +236,7 @@ test "6.75 at two bits is not a tie, so the nearer neighbour 6 wins" {
 }
 
 test "6.75 at three bits is not a tie, so 7 wins" {
+    try support.requireProvider();
     // At three bits the neighbours are 110b = 6 and 111b = 7, and 7 is nearer.
     var x = try support.exactDecimal("6.75", 200);
     defer x.deinit();

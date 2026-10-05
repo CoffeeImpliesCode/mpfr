@@ -1,29 +1,75 @@
-//! Zig package root for the GMP 6.3.0 fork.
+//! Zig package root for the GMP 6.3.0 fork: the real GNU Multiple Precision
+//! Arithmetic Library, built from the complete source tree with the portable C
+//! backend (`NO_ASM`, mpn path `generic`), and published two ways.
 //!
-//! Two layers are on offer and they are meant to be used together:
+//!   * `dep.artifact("gmp")` is the static `libgmp` this tree builds, with the
+//!     generated `gmp.h` in its include tree, for a C or `translate-c`
+//!     dependent. `dep.module("gmp")` is the same library, linked, plus:
+//!     * `gmp.c` — the complete translated GMP API, stdio and `va_list`
+//!       functions included, which is the escape hatch for anything the
+//!       facade does not cover;
+//!     * `gmp.BigInt`, `gmp.Rational`, `gmp.Float` and `gmp.Rand` — owned Zig
+//!       types with explicit `deinit`;
+//!     * `gmp.DivisionMode`, `gmp.Division`, `gmp.OwnedString`,
+//!       `gmp.ParseError`, `gmp.FormatError` — the facade's public result and
+//!       error types;
+//!     * `gmp.version`, `gmp.versionString`, `gmp.upstream_version` and
+//!       `gmp.limb_bits`.
+//!   * `zig build -fsys=gmp` links an installed GMP instead of compiling this
+//!     tree, and the translated declarations then come from the installed
+//!     `gmp.h`. See README.zig.md.
 //!
-//!   * `gmp.c` is the complete translated GMP API. Every `mpz`, `mpq`, `mpf`,
-//!     `mpn`, `gmp_rand` and `gmp_printf` entry point of GMP 6.3.0 is there,
-//!     translated from the generated `gmp.h`, with no omissions. It is the
-//!     escape hatch for anything the facade does not cover.
-//!   * `BigInt`, `Rational`, `Float` and `Rand` are owned Zig types over the
-//!     same values, with explicit `deinit` and no global allocator hooks.
+//! What this module deliberately does not do: no library code here installs
+//! allocator hooks, so GMP's own allocator stays in force; it does not run an
+//! install step, so a dependent that wants headers on disk has a C build this
+//! package does not perform; and GMP 6.3 has neither `mpf_const_pi` nor
+//! `mpf_set_inf`, so there is no constant or special-value setter here. MPFR
+//! is the separate package that provides a pi constant and an explicit
+//! rounding mode.
+//!
+//! The shortest sequence that uses it, from a dependent package's `build.zig`:
+//!
+//! ```zig
+//! const gmp_dep = b.dependency("gmp", .{ .target = target, .optimize = optimize });
+//! module.addImport("gmp", gmp_dep.module("gmp"));
+//! ```
+//!
+//! and from Zig source:
+//!
+//! ```zig
+//! const std = @import("std");
+//! const gmp = @import("gmp");
+//!
+//! pub fn main() !void {
+//!     var value = try gmp.BigInt.parse("123456789012345678901234567890", 10);
+//!     defer value.deinit();
+//!     var buffer: [64]u8 = undefined;
+//!     std.debug.print("{s}\n", .{try value.writeTo(&buffer, 10)});
+//! }
+//! ```
 //!
 //! Memory follows GMP: values are allocated by GMP's own allocator and freed
-//! by `mpz_clear`, `mpq_clear` or `mpf_clear`. Strings GMP allocates are
-//! returned as `OwnedString` and released through GMP's own free function with
-//! the size of the block, which is what GMP's allocator contract asks for.
-//! Nothing here replaces `gmp_allocate_func`, and nothing borrows a pointer
-//! beyond the lifetime of its owner.
+//! by `mpz_clear`, `mpq_clear` or `mpf_clear`, and a random state by
+//! `gmp_randclear`. Those hooks are library-global, so a program that replaces
+//! them through `c.mp_set_memory_functions` changes the allocator for every
+//! value this package owns. Strings GMP allocates are returned as
+//! `OwnedString` and released through GMP's own free function with the size of
+//! the block, which is what GMP's allocator contract asks for; nothing here
+//! borrows a pointer beyond the lifetime of its owner.
+//!
+//! Every `init` and every `parse` produces one owned value and every one of
+//! them has exactly one `deinit`. Zig has no move, so a copy made by
+//! assignment is a second name for one GMP allocation and releasing both is a
+//! double free.
 //!
 //! Text crosses into GMP the way GMP reads it: `parse` and `setStr` take a
 //! sentinel terminated `[:0]const u8` and hand the pointer straight over, and
 //! `writeTo` returns the caller's own buffer as one, so rendered text can be
-//! parsed again without a copy in between.
+//! parsed again without a copy in between. Base 0 does not mean the same thing
+//! at every call site: `mpz_set_str` and `mpq_set_str` read it as prefix
+//! detection, `mpf_set_str` as base 10.
 //!
-//! The library is the real GNU MP library, built from the complete source tree
-//! with the portable C backend (`NO_ASM`, mpn path `generic`). See README.zig.md
-//! for what that means for performance and ABI.
+//! See README.zig.md for what the portable backend costs.
 
 const std = @import("std");
 
@@ -66,6 +112,10 @@ pub const upstream_version = "6.3.0";
 pub const limb_bits = c.GMP_LIMB_BITS;
 
 /// Render the GMP version of the generated header, for diagnostics.
+///
+/// Returns `error.NoSpaceLeft` when `buffer` is too short, in which case
+/// `buffer` holds as much of the version as fitted and must be discarded. The
+/// result borrows `buffer`.
 pub fn versionString(buffer: []u8) ![]u8 {
     return std.fmt.bufPrint(buffer, "{d}.{d}.{d}", .{ version.major, version.minor, version.patchlevel });
 }

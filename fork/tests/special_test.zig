@@ -18,8 +18,10 @@
 
 const std = @import("std");
 const mpfr = @import("mpfr");
+const support = @import("support.zig");
 
 test "a NaN classifies as NaN and nothing else" {
+    try support.requireProvider();
     var x = mpfr.Float.init(64);
     defer x.deinit();
     x.setNan();
@@ -34,6 +36,7 @@ test "a NaN classifies as NaN and nothing else" {
 }
 
 test "an infinity classifies as an infinity with the requested sign" {
+    try support.requireProvider();
     var positive = mpfr.Float.init(64);
     defer positive.deinit();
     positive.setInf(true);
@@ -58,6 +61,7 @@ test "an infinity classifies as an infinity with the requested sign" {
 }
 
 test "a zero is signed, and its sign function reports zero" {
+    try support.requireProvider();
     var positive = mpfr.Float.init(64);
     defer positive.deinit();
     positive.setZero(true);
@@ -83,6 +87,7 @@ test "a zero is signed, and its sign function reports zero" {
 }
 
 test "sign on a NaN reports zero and raises the range-error flag" {
+    try support.requireProvider();
     // The `mpfr_sgn` macro (src/mpfr.h:901-904) evaluates
     // `mpfr_set_erangeflag()` for a NaN, so the side effect is part of the
     // contract this facade mirrors.
@@ -105,6 +110,7 @@ test "sign on a NaN reports zero and raises the range-error flag" {
 }
 
 test "any comparison involving a NaN is unordered and compares equal" {
+    try support.requireProvider();
     // doc/mpfr.texi:2304-2320: mpfr_cmp yields 0 when either operand is NaN,
     // which is the same sentinel mpfr_cmp uses for equality.
     var nan_value = mpfr.Float.init(64);
@@ -123,6 +129,7 @@ test "any comparison involving a NaN is unordered and compares equal" {
 }
 
 test "dividing a non-zero value by zero yields a signed infinity, exactly" {
+    try support.requireProvider();
     // tests/tdiv.c:848-870.
     const cases = [_]struct {
         numerator: c_long,
@@ -157,6 +164,7 @@ test "dividing a non-zero value by zero yields a signed infinity, exactly" {
 }
 
 test "dividing an infinity by zero is exact and raises no flag" {
+    try support.requireProvider();
     // tests/tdiv.c:871-877: the divide-by-zero flag needs finite inputs.
     var numerator = mpfr.Float.init(64);
     defer numerator.deinit();
@@ -176,6 +184,7 @@ test "dividing an infinity by zero is exact and raises no flag" {
 }
 
 test "dividing an infinity by an infinity yields an exact NaN" {
+    try support.requireProvider();
     // tests/tdiv.c:845-846.
     var numerator = mpfr.Float.init(64);
     defer numerator.deinit();
@@ -196,6 +205,7 @@ test "dividing an infinity by an infinity yields an exact NaN" {
 }
 
 test "dividing zero by zero yields an exact NaN" {
+    try support.requireProvider();
     // doc/mpfr.texi:1011-1012 for the ternary value and 1145-1147 for the NaN
     // flag, which upstream raises whenever a NaN is produced.
     var numerator = mpfr.Float.init(64);
@@ -215,6 +225,7 @@ test "dividing zero by zero yields an exact NaN" {
 }
 
 test "a NaN propagates through addition and raises the NaN flag" {
+    try support.requireProvider();
     // doc/mpfr.texi:1163-1165: unlike ISO C99, MPFR raises the NaN flag even
     // when a NaN is merely propagated.
     var nan_value = mpfr.Float.init(64);
@@ -234,6 +245,7 @@ test "a NaN propagates through addition and raises the NaN flag" {
 }
 
 test "an integer conversion of a NaN raises the range-error flag" {
+    try support.requireProvider();
     // doc/mpfr.texi:1155-1158: a range error is reported when a function that
     // does not return an MPFR number has an invalid result.
     var x = mpfr.Float.init(64);

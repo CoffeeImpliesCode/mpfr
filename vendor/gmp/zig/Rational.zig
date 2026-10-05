@@ -16,6 +16,16 @@
 //! it takes two integers rather than a text, so it has to pick a canonical
 //! form itself, and it does exactly that with the C function rather than
 //! with a private rule.
+//!
+//! `parse` and `setStr` pass `base` straight to `mpq_set_str`, where base 0
+//! does mean prefix detection, done separately for the numerator and the
+//! denominator (`doc/gmp.texi:4413-4418`); that is a different zero from the
+//! one `mpf_set_str` reads as base 10. See `base.zig`.
+//!
+//! A `Rational` owns one `mpq_t`: `init` produces it, `deinit` releases it,
+//! once per `init`. Zig has no move, so a copy made by assignment is a second
+//! name for the same GMP value and releasing both is a double free; `clone`
+//! is the only second value this type has and it carries its own allocation.
 
 const std = @import("std");
 const c = @import("c");
@@ -34,21 +44,28 @@ fn cmpToOrder(value: c_int) std.math.Order {
 
 pub const Rational = struct {
     /// The GMP value itself, for the raw escape hatch (`gmp.c`).
+    ///
+    /// The field is reachable, so it is not read only by convention: a write
+    /// through `c` changes this value and `deinit` still releases what GMP
+    /// allocated for it.
     raw: c.mpq_t,
 
     /// The value as GMP's mutable C pointer, `mpq_ptr`. GMP writes through
-    /// this, so it is only available on a mutable value.
+    /// this, so it is only available on a mutable value. The pointer lives
+    /// inside the receiver: it does not outlive this value and does not survive
+    /// a move.
     pub fn rawPtr(self: *Rational) c.mpq_ptr {
         return &self.raw[0];
     }
 
     /// The value as GMP's read-only C pointer, `mpq_srcptr`, which is what
-    /// `gmp.h` declares its operands with.
+    /// `gmp.h` declares its operands with. Like `rawPtr`, it points inside the
+    /// receiver and does not outlive it.
     pub fn rawSrcPtr(self: *const Rational) c.mpq_srcptr {
         return &self.raw[0];
     }
 
-    /// Allocate an initialised value equal to 0/1.
+    /// Allocate an initialised value equal to 0/1, in canonical form.
     pub fn init() Rational {
         var self: Rational = .{ .raw = undefined };
         c.mpq_init(self.rawPtr());
@@ -56,11 +73,20 @@ pub const Rational = struct {
     }
 
     /// Release the limbs GMP allocated for this value.
+    ///
+    /// The value is unusable afterwards and a second call is a double free.
+    /// One `init` is one `deinit`: a copy made by assignment is a second name
+    /// for this same GMP value and must not be released.
     pub fn deinit(self: *Rational) void {
         c.mpq_clear(self.rawPtr());
     }
 
     /// Parse `n/d`, `n` or `d` in `base`.
+    ///
+    /// Base 0 is GMP's prefix detection here, applied separately to each part,
+    /// so `0xEF/100` is 239/100 while `0xEF/0x100` is 239/256
+    /// (`doc/gmp.texi:4413-4418`). A failed parse releases the half-built
+    /// value, so an error leaves the caller nothing to release.
     ///
     /// `mpq_set_str` parses the two parts independently and does **not**
     /// canonicalise, so `parse("2/4", 10)` really is 2/4. Call `canonicalize`
@@ -76,12 +102,18 @@ pub const Rational = struct {
         return self;
     }
 
-    /// Replace the value with the parsed `text`.
+    /// Replace the value with the parsed `text`. Base 0 is GMP's prefix
+    /// detection, as in `parse`; the base must otherwise be in 2..62.
     ///
     /// `text` must be NUL terminated: `mpq_set_str` reads it as a C string and
     /// the pointer is passed through unchanged.
     ///
-    /// On failure the value is undefined, as the GMP manual specifies.
+    /// On `error.InvalidBase` GMP is not called. On `error.InvalidDigit` the
+    /// value is partly assigned and must not be read: `mpq_set_str` sets the
+    /// denominator to 1 before parsing the numerator when the text has no
+    /// slash, and it writes the numerator before the denominator when it has
+    /// one (`mpq/set_str.c:48-55`, `:57-67`). `parse` releases such a value
+    /// instead of returning it.
     pub fn setStr(self: *Rational, text: [:0]const u8, base: u8) ParseError!void {
         if (!bases.validInputBase(base)) return error.InvalidBase;
         if (c.mpq_set_str(self.rawPtr(), text.ptr, base) < 0) return error.InvalidDigit;
@@ -106,12 +138,15 @@ pub const Rational = struct {
         c.mpq_set_ui(self.rawPtr(), top, bottom);
     }
 
-    /// Copy `other` into `self`.
+    /// Copy `other` into `self`, which may be `self`. `mpq_set` is a pure
+    /// assignment: it does not canonicalise either value.
     pub fn set(self: *Rational, other: *const Rational) void {
         c.mpq_set(self.rawPtr(), other.rawSrcPtr());
     }
 
-    /// An independent copy of the value.
+    /// An independent copy of the value, with its own limbs and its own
+    /// `deinit`. `mpq_set` is an assignment, so the copy is as canonical as
+    /// `self` was: copying a value `setStr` produced does not reduce it.
     pub fn clone(self: *const Rational) Rational {
         var copy = Rational.init();
         copy.set(self);
@@ -200,14 +235,16 @@ pub const Rational = struct {
         return self.cmpZero() == .lt;
     }
 
-    /// An owned copy of the numerator.
+    /// An independent `BigInt` copy of the numerator, with its own allocation
+    /// and its own `deinit`. It borrows nothing from this rational.
     pub fn numerator(self: *const Rational) BigInt {
         var result = BigInt.init();
         c.mpq_get_num(result.rawPtr(), self.rawSrcPtr());
         return result;
     }
 
-    /// An owned copy of the denominator.
+    /// An independent `BigInt` copy of the denominator, with its own allocation
+    /// and its own `deinit`. It borrows nothing from this rational.
     pub fn denominator(self: *const Rational) BigInt {
         var result = BigInt.init();
         c.mpq_get_den(result.rawPtr(), self.rawSrcPtr());
@@ -224,8 +261,9 @@ pub const Rational = struct {
     ///
     /// GMP writes the NUL terminated text straight into `buffer`; this wrapper
     /// allocates nothing and copies nothing. The returned slice is sentinel
-    /// typed, so it can be fed straight back into `parse` or `setStr`, and it
-    /// borrows `buffer`.
+    /// typed, so it can be fed straight back into `parse` or `setStr`. It
+    /// borrows `buffer` and is invalidated when the caller writes `buffer` again
+    /// or lets it out of scope.
     ///
     /// Capacity: `buffer.len` must be at least
     /// `mpz_sizeinbase(mpq_numref(value), base)
@@ -273,7 +311,8 @@ pub const Rational = struct {
     ///
     /// The base range check is the only thing that can fail, exactly as on
     /// `BigInt.toOwnedString`; see `FormatError` for why an allocation failure
-    /// is not a returnable condition in GMP.
+    /// is not a returnable condition in GMP. The result owns a GMP block, not
+    /// a Zig one, so `OwnedString.deinit` is the only release for it.
     pub fn toOwnedString(self: *const Rational, base: u8) FormatError!OwnedString {
         if (!bases.validOutputBase(base)) return error.InvalidBase;
         // `gmp.h` declares a plain `char *` return, which `translate-c` spells

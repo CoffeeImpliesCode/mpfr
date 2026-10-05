@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fork-authored. mpfr's `FORK-LICENSE.md` at this repository's root records the
+// owner's authorization of that grant; the snapshot carries no GMP
+// `FORK-LICENSE.md` of its own. This is the GMP fork's file inside that
+// snapshot, and the supplier package's copy carries no such header, so a
+// re-sync must either keep this line deliberately or drop it deliberately.
+
 //! Build of the GMP 6.3.0 fork as a Zig package.
 //!
 //! What this does, in order:
@@ -14,10 +22,31 @@
 //!      the portable C `mpn` layer, `printf`, `scanf` and the random state
 //!      code, with `NO_ASM` and without autotools, CMake, Make or any download
 //!      at build time.
+//!      A WASI target additionally selects the toolchain's own
+//!      signal emulation - the `_WASI_EMULATED_SIGNAL` its `signal.h` demands
+//!      and its `libwasi-emulated-signal.a` - because GMP's `invalid.c` and
+//!      `errno.c` include `<signal.h>` and raise `SIGFPE`. That is the only
+//!      thing WASI changes here, and it changes no source.
 //!   4. Exposes the result as the module `gmp` (facade plus the complete
-//!      translated C API) and as the static library artifact `gmp`, whose
+//!      translated C API) and as the library artifact `gmp`, whose
 //!      include tree carries the generated `gmp.h`, so a dependent needs only
 //!      `dep.artifact("gmp")` or `dep.module("gmp")`.
+//!   5. Installs `gmp.pc` beside the library, where upstream installs it
+//!      (`Makefile.am:121-122`), so a prefix that ships libgmp also describes
+//!      it. `gmpxx.pc` is not installed: upstream adds it only under
+//!      `if WANT_CXX`, and this build compiles no C++.
+//!
+//! `-Dlinkage=static` is the default and is what this file always built.
+//! `-Dlinkage=dynamic` builds a shared libgmp and changes three real things
+//! together, because they are one decision upstream makes at once:
+//!
+//!   * the artifact's linkage, and with it the position-independent
+//!     compilation of GMP's objects;
+//!   * `LIBGMP_DLL` in the generated `gmp.h`, which `gmp-h.in:120-131` turns
+//!     into `__GMP_DECLSPEC` and every dependent header reads, including
+//!     MPFR's (`src/mpfr.h:321-331`, `src/mpfr-impl.h:251-253`);
+//!   * the shared object's name, taken from upstream's own libtool
+//!     versioning rather than from a number chosen here.
 //!
 //! Steps: `zig build` installs the library, `zig build test` runs the tests in
 //! the current optimize mode, `zig build smoke` and `zig build run` run the
@@ -46,6 +75,14 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
     const use_system_library = b.systemIntegrationOption("gmp", .{});
+    // Static is the default because it is what this file always built:
+    // `b.addLibrary` with an explicit `.linkage = .static`. A dependent that
+    // passes nothing gets the same library it always got.
+    const linkage = b.option(
+        std.builtin.LinkMode,
+        "linkage",
+        "Linkage of the libgmp artifact: static (default) or dynamic",
+    ) orelse .static;
 
     // Registered up front so `dep.module("gmp")` resolves for dependents.
     const gmp_module = b.addModule("gmp", .{
@@ -54,7 +91,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const library = makeLibrary(b, target, optimize, gmp_module, use_system_library, true);
+    const library = makeLibrary(b, target, optimize, linkage, gmp_module, use_system_library, true);
+
+    // `pkgconfig_DATA = gmp.pc` (Makefile.am:122) is unconditional upstream, so
+    // the library and its metadata are installed together or the installed
+    // prefix describes libgmp to nobody. `-Dsystem=gmp` selects an installed
+    // GMP and contributes nothing to this prefix - not even metadata naming a
+    // library this build did not produce.
+    switch (library) {
+        .bundled => installPkgConfig(b),
+        .system => {},
+    }
 
     const example = addExample(b, target, optimize, gmp_module, library, "gmp-example");
     b.installArtifact(example);
@@ -81,7 +128,7 @@ pub fn build(b: *std.Build) void {
     // failed instead of reporting one aggregate result for the matrix.
     const check_step = b.step("check", "Compile the public facade, tests and example");
     if (!target.query.isNative()) {
-        addTargetCheck(b, check_step, target.query, .Debug, "gmp-check");
+        addTargetCheck(b, check_step, target.query, .Debug, linkage, "gmp-check");
     } else {
         for (checked_targets) |triple| {
             // Zig 0.16's `Target.Query` has no `arch_os_abi` field: a triple is
@@ -90,7 +137,7 @@ pub fn build(b: *std.Build) void {
             const query = std.Build.parseTargetQuery(.{ .arch_os_abi = triple }) catch |err| {
                 std.debug.panic("gmp: cannot parse checked target {s}: {s}", .{ triple, @errorName(err) });
             };
-            addTargetCheck(b, check_step, query, .Debug, b.fmt("gmp-check-{s}", .{triple}));
+            addTargetCheck(b, check_step, query, .Debug, linkage, b.fmt("gmp-check-{s}", .{triple}));
         }
     }
 
@@ -105,6 +152,7 @@ fn addTargetCheck(
     check_step: *std.Build.Step,
     query: std.Target.Query,
     optimize: std.builtin.OptimizeMode,
+    linkage: std.builtin.LinkMode,
     name: []const u8,
 ) void {
     const resolved = b.resolveTargetQuery(query);
@@ -113,7 +161,7 @@ fn addTargetCheck(
         .target = resolved,
         .optimize = optimize,
     });
-    const checked_library = makeLibrary(b, resolved, optimize, checked_module, false, false);
+    const checked_library = makeLibrary(b, resolved, optimize, linkage, checked_module, false, false);
 
     const checked_example = addExample(
         b,
@@ -167,12 +215,13 @@ fn makeLibrary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    linkage: std.builtin.LinkMode,
     gmp_module: *std.Build.Module,
     use_system_library: bool,
     install: bool,
 ) Library {
     if (use_system_library) return makeSystemLibrary(b, target, optimize, gmp_module);
-    return .{ .bundled = makeBundledLibrary(b, target, optimize, gmp_module, install) };
+    return .{ .bundled = makeBundledLibrary(b, target, optimize, linkage, gmp_module, install) };
 }
 
 /// Build the real libgmp from this repository.
@@ -180,21 +229,74 @@ fn makeBundledLibrary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    linkage: std.builtin.LinkMode,
     gmp_module: *std.Build.Module,
     install: bool,
 ) Library.Bundled {
-    const params = config.paramsFor(target.result, optimize);
+    const params = config.paramsFor(target.result, optimize, linkage == .dynamic);
     const generated = generate(b, optimize, params);
 
     const library = b.addLibrary(.{
         .name = "gmp",
-        .linkage = .static,
+        .linkage = linkage,
+        // Upstream's `LIBGMP_LT_CURRENT/REVISION/AGE` (Makefile.am:107-109)
+        // reach `libgmp_la_LDFLAGS` at Makefile.am:294-295 as
+        // `-version-info 15:0:5`; libtool's library major is `CURRENT - AGE`
+        // and its real name is `$libname.so.$major.$age.$revision`. A static
+        // library has no name to carry a version, hence null there.
+        .version = if (linkage == .dynamic) sharedLibraryVersion(b) else null,
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            // `null` on the static route leaves the driver to decide, which is
+            // what this build always did; `false` would add `-fno-PIC` and
+            // change the default artefact.
+            .pic = if (linkage == .dynamic) true else null,
         }),
     });
+
+    // WASI signal emulation, and only for WASI.
+    //
+    // GMP asks for a signal in two compiled translation units: `invalid.c:37`
+    // and `errno.c:37` include `<signal.h>` unconditionally, above every
+    // `#ifdef` in the file, and `__gmp_invalid_operation` and `__gmp_exception`
+    // call `raise (SIGFPE)` (`invalid.c:80`, `errno.c:52`). This toolchain's
+    // `wasm-wasi-musl/signal.h:1-3` is a bare `#error` unless
+    // `_WASI_EMULATED_SIGNAL` is defined, so on `wasm32-wasi` those two files
+    // are not parseable at all without it, and every diagnostic of a wasm
+    // build of this graph is inside those two units. `configure.ac` has no
+    // wasm branch, so nothing upstream would set this; the configuration has
+    // to come from the target's libc, and it is therefore a property of this
+    // build rather than a fact about `config.h`.
+    //
+    // The provider is the one this toolchain's own WASI sysroot ships:
+    // `lib/libc/wasi/libc-bottom-half/signal/signal.c` is compiled into the
+    // target's `libwasi-emulated-signal.a`, and `lib/std/zig/target.zig:384`
+    // lists `wasi-emulated-signal` among the library names a WASI+musl target
+    // is known to have, so the linker resolves that name to that archive with
+    // no search path of its own. It delivers a signal synchronously and ends
+    // the module through its own exit; it is an emulation over what WASI has,
+    // not a POSIX signal namespace.
+    //
+    // Nothing is surrendered to get there: no source is omitted, no substitute
+    // for `raise` is written, no macro is invented, and `HAVE_RAISE` stays 1
+    // (`zig/config_gen.zig:262`), which is what keeps `invalid.c:49-51` off its
+    // `kill (getpid (), sig)` fallback. Both statements sit inside the
+    // `os.tag == .wasi` test, so the other five checked targets are given
+    // nothing they did not have before.
+    if (target.result.os.tag == .wasi) {
+        library.root_module.addCMacro("_WASI_EMULATED_SIGNAL", "1");
+        // Linked on the module that holds the reference to `raise`. A
+        // dependent that links this archive inherits it, because
+        // `Step.Compile.getCompileDependencies(false)` walks a static
+        // library's `link_objects` and puts every `system_lib` it finds on
+        // the dependee's linker line
+        // (`lib/std/Build/Step/Compile.zig:1064-1088`); under
+        // `-Dlinkage=dynamic` the same entry is on the shared object's own
+        // link line, which is where a dependent would look for it anyway.
+        library.root_module.linkSystemLibrary("wasi-emulated-signal", .{});
+    }
 
     // The library sources. `__GMP_WITHIN_GMP` is what upstream's `Makefile.am`
     // passes on `AM_CPPFLAGS`. Nothing else is needed on the command line:
@@ -271,6 +373,99 @@ fn makeSystemLibrary(
 
     gmp_module.addImport("c", translate.createModule());
     return .system;
+}
+
+/// Install `gmp.pc` where upstream installs it.
+///
+/// `pkgconfigdir = $(libdir)/pkgconfig` and `pkgconfig_DATA = gmp.pc`
+/// (Makefile.am:121-122) are unconditional, and `gmpxx.pc` joins them only
+/// under `if WANT_CXX` (Makefile.am:127-130), which this build does not select
+/// because it compiles no C++. One file is therefore the whole of upstream's
+/// pkg-config surface for this library, and a prefix that carried libgmp
+/// without it would have no metadata describing the library it ships.
+fn installPkgConfig(b: *std.Build) void {
+    const out = b.addWriteFiles();
+    _ = out.add("gmp.pc", pkgConfigSource(b));
+    // `Step.InstallFile.create` records the step without attaching it to the
+    // install step, so the dependency has to be made explicit here rather than
+    // left to the caller's discretion.
+    b.getInstallStep().dependOn(&b.addInstallFile(
+        out.getDirectory().path(b, "gmp.pc"),
+        "lib/pkgconfig/gmp.pc",
+    ).step);
+}
+
+/// Upstream's `gmp.pc.in` with the placeholders `configure` fills in.
+///
+/// Only the `@...@` fields are replaced, so the `Cflags:` and `Libs:` lines
+/// stay upstream's own. `Libs: -L${libdir} -lgmp` is the whole dependency
+/// record: libgmp has no library dependency of its own, which is what makes
+/// it the leaf that closes every consumer's link line.
+fn pkgConfigSource(b: *std.Build) []const u8 {
+    const substitutions = [_][2][]const u8{
+        .{ "@prefix@", "${prefix}" },
+        .{ "@exec_prefix@", "${prefix}" },
+        .{ "@libdir@", "${prefix}/lib" },
+        .{ "@includedir@", "${prefix}/include" },
+        // `AC_INIT(GNU MP, GMP_VERSION, ..., gmp)` (configure.ac:40) is where
+        // `configure` takes `PACKAGE_NAME` from.
+        .{ "@PACKAGE_NAME@", "GNU MP" },
+        .{ "@PACKAGE_VERSION@", packageVersion(b) },
+    };
+    var text = readPackageFile(b, "gmp.pc.in");
+    for (substitutions) |substitution| {
+        text = std.mem.replaceOwned(u8, b.allocator, text, substitution[0], substitution[1]) catch
+            @panic("OOM");
+    }
+    return text;
+}
+
+/// GMP's `major.minor.patch`, read out of the three macros upstream's
+/// `configure` substitutes into `gmp-h.in`.
+///
+/// `gmp-h.in:2338-2340` is the source `configure:3619` renders the `VERSION`
+/// macro from, and that macro is what `version.c:33` compiles into the
+/// exported `gmp_version` string, so the installed metadata names the same
+/// release the compiled library reports. `zig/config_gen.zig` commits to the
+/// same three numbers for the same reason.
+fn packageVersion(b: *std.Build) []const u8 {
+    const gmp_header = readPackageFile(b, "gmp-h.in");
+    return b.fmt("{d}.{d}.{d}", .{
+        macroNumber(b, gmp_header, "__GNU_MP_VERSION"),
+        macroNumber(b, gmp_header, "__GNU_MP_VERSION_MINOR"),
+        macroNumber(b, gmp_header, "__GNU_MP_VERSION_PATCHLEVEL"),
+    });
+}
+
+/// One number from a `#define NAME value` line of `text`, or a build failure
+/// naming the file and the macro.
+///
+/// A missing or unparsable macro stops the build rather than installing a
+/// guessed version: `libtoolNumber` refuses the same way for the same reason,
+/// because a wrong number here would be shipped as the library's identity.
+fn macroNumber(b: *std.Build, text: []const u8, name: []const u8) u32 {
+    const prefix = b.fmt("#define {s}", .{name});
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t");
+        if (!std.mem.startsWith(u8, trimmed, prefix)) continue;
+        const after = trimmed[prefix.len..];
+        // `__GNU_MP_VERSION` *is* a prefix of `__GNU_MP_VERSION_MINOR` and of
+        // `__GNU_MP_VERSION_PATCHLEVEL`, so a bare prefix test would let the
+        // minor or patchlevel line satisfy the major lookup. Requiring
+        // whitespace right after the name is what keeps them apart.
+        if (after.len == 0) continue;
+        if (after[0] != ' ' and after[0] != '\t') continue;
+        const value = std.mem.trim(u8, after, " \t");
+        return std.fmt.parseInt(u32, value, 10) catch {
+            @panic(b.fmt(
+                "vendor/gmp/gmp-h.in: {s} is not a number ('{s}'); refusing to " ++
+                    "install a pkg-config Version of guesswork",
+                .{ name, value },
+            ));
+        };
+    }
+    @panic(b.fmt("vendor/gmp/gmp-h.in no longer defines {s}", .{name}));
 }
 
 /// Translate the public header with `gmp.h` resolved from `include_dir`.
@@ -386,6 +581,49 @@ fn generate(
         .mparam_header = mparam_header,
         .operation_sources = operation_sources.items,
     };
+}
+
+/// The shared library's version, read out of upstream's libtool versioning.
+///
+/// `LIBGMP_LT_CURRENT`, `LIBGMP_LT_REVISION` and `LIBGMP_LT_AGE`
+/// (Makefile.am:107-109) are what `libgmp_la_LDFLAGS` passes as
+/// `-version-info` (Makefile.am:294-295). Libtool's library major is
+/// `CURRENT - AGE`, its real file name is `$libname.so.$major.$age.$revision`
+/// and its soname is `$libname.so.$major`, so GMP 6.3.0's `15:0:5` names
+/// `libgmp.so.10.5.0` with soname `libgmp.so.10`.
+///
+/// Reading upstream's numbers instead of writing `10, 5, 0` keeps the soname
+/// and `gmp.h` from disagreeing after a rebase; a missing or unparsable
+/// assignment stops the build rather than shipping a guessed name.
+fn sharedLibraryVersion(b: *std.Build) std.SemanticVersion {
+    return .{
+        .major = libtoolNumber(b, "LIBGMP_LT_CURRENT") - libtoolNumber(b, "LIBGMP_LT_AGE"),
+        .minor = libtoolNumber(b, "LIBGMP_LT_AGE"),
+        .patch = libtoolNumber(b, "LIBGMP_LT_REVISION"),
+    };
+}
+
+/// One number from a `NAME = value` assignment in upstream's `Makefile.am`.
+fn libtoolNumber(b: *std.Build, name: []const u8) u32 {
+    const prefix = b.fmt("{s}", .{name});
+    var lines = std.mem.splitScalar(u8, @embedFile("Makefile.am"), '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t");
+        if (!std.mem.startsWith(u8, trimmed, prefix)) continue;
+        const after = trimmed[prefix.len..];
+        // A name that is only a prefix of another assignment is not this one.
+        if (after.len == 0) continue;
+        if (after[0] != ' ' and after[0] != '\t' and after[0] != '=') continue;
+        const rest = std.mem.trim(u8, after, " \t=");
+        return std.fmt.parseInt(u32, rest, 10) catch {
+            @panic(b.fmt(
+                "vendor/gmp/Makefile.am: {s} is not a number ('{s}'); refusing to " ++
+                    "name the shared library by guesswork",
+                .{ name, rest },
+            ));
+        };
+    }
+    @panic(b.fmt("vendor/gmp/Makefile.am no longer defines {s}", .{name}));
 }
 
 /// Read a file from the package root, which is the GMP release tree.
