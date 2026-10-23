@@ -187,7 +187,7 @@ pub fn build(b: *std.Build) error{UnsupportedTarget}!void {
     const use_system_gmp = b.systemIntegrationOption("gmp", .{});
     // Static linkage preserves the package's default.
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Linkage of the installed libmpfr: static (default) or dynamic",
     ) orelse .static;
@@ -227,7 +227,7 @@ pub fn build(b: *std.Build) error{UnsupportedTarget}!void {
     if (native.vendored_gmp) |gmp| installGmpClosure(b, gmp);
 
     const run_example = b.addRunArtifact(native.example);
-    if (b.args) |args| run_example.addArgs(args);
+    run_example.addPassthruArgs();
     b.step("run", "Run the deterministic MPFR example").dependOn(&run_example.step);
     b.step("smoke", "Run the deterministic MPFR example and report its output")
         .dependOn(&run_example.step);
@@ -280,10 +280,10 @@ const Graph = struct {
 fn wireUp(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     use_system_mpfr: bool,
     use_system_gmp: bool,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
     publish: bool,
 ) Graph {
@@ -411,9 +411,9 @@ fn wireUp(
 fn buildUpstreamLibrary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     use_system_gmp: bool,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     definitions: []const []const u8,
     gmp_include: ?std.Build.LazyPath,
     gmp: ?*std.Build.Step.Compile,
@@ -489,10 +489,11 @@ fn linkInstalledSibling(
 fn gmpDependency(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    linkage: std.builtin.LinkMode,
+    optimize: std.lang.Optimize,
+    linkage: std.lang.LinkMode,
 ) *std.Build.Dependency {
-    if (b.build_root.handle.access(b.graph.io, vendored_gmp, .{})) |_| {} else |_| {
+    b.dependOnDirectoryMetadata(b.path(vendored_gmp));
+    if (b.root.access(b.graph.io, vendored_gmp, .{})) |_| {} else |_| {
         @panic(
             "mpfr: " ++ vendored_gmp ++ " is missing or unreadable. MPFR cannot be " ++
                 "built without GMP, and the shared fork contract requires a " ++

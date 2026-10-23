@@ -7,7 +7,7 @@
 { pkgs, ... }:
 
 let
-  zig = pkgs.zig_0_16;
+  zig = pkgs.zig_0_17;
 
   # Shared Zig flags for package and consumer tasks.
   zigFlags = "-j8 --summary all";
@@ -76,8 +76,8 @@ in
 
   assertions = [
     {
-      assertion = zig.version == "0.16.0";
-      message = "This SDK targets Zig 0.16.0; the environment resolved ${zig.version}.";
+      assertion = zig.version == "0.17.0";
+      message = "This SDK targets Zig 0.17.0; the environment resolved ${zig.version}.";
     }
   ];
 

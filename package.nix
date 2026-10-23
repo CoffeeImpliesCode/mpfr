@@ -60,7 +60,7 @@ stdenv.mkDerivation {
     description = "GNU MPFR 4.2.2, built from source as a Zig package, with its vendored GMP provider";
     homepage = "https://www.mpfr.org/";
     longDescription = ''
-      The complete libmpfr compiled from this repository by Zig 0.16.0, with the
+      The complete libmpfr compiled from this repository by Zig 0.17.0, with the
       typed Zig facade, the translated public C API, pkg-config metadata and the
       vendored GMP snapshot the library links. `linkage` selects a static archive
       or a shared library; both variants install the matching libgmp beside it,

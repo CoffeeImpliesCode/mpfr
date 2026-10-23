@@ -5,7 +5,7 @@
 {
   description = "GNU MPFR 4.2.2 as a standalone Zig SDK";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/c7def046b9a883d46974757852106483d741586f";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
 
   outputs =
     { nixpkgs, ... }:
@@ -25,9 +25,9 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        static = pkgs.callPackage ./package.nix { zig = pkgs.zig_0_16; };
+        static = pkgs.callPackage ./package.nix { zig = pkgs.zig_0_17; };
         shared = pkgs.callPackage ./package.nix {
-          zig = pkgs.zig_0_16;
+          zig = pkgs.zig_0_17;
           linkage = "dynamic";
         };
 
@@ -38,7 +38,7 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [
-            pkgs.zig_0_16
+            pkgs.zig_0_17
             pkgs.pkg-config
             pkgs.gnumake
             pkgs.nix

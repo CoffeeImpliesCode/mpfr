@@ -2,6 +2,7 @@
 
 Changes from GNU MPFR 4.2.2.
 
+- Port to Zig 0.17.0.
 - Updated devenv tasks to run from the package root and use external caches and install prefixes.
 - Added `flake.lock` to the package paths so fetched packages carry the pinned Nix inputs.
 - Installed `gmp.pc` beside `mpfr.pc`; `mpfr.pc` keeps `Requires` empty and retains its `-lgmp` link entry.

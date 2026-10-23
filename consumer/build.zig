@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Which delivery of libmpfr the dependency builds: a static archive or a " ++
             "shared library. Forwarded to the library's own -Dlinkage, which " ++
@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Run the MPFR consumer demonstration").dependOn(&run.step);
 
     // Runtime mode does not link a provider; this run step does not depend

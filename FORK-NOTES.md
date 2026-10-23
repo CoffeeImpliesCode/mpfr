@@ -33,6 +33,9 @@
 - Dynamic linkage derives the shared-library version from MPFR's makefile metadata and enables PIC. `-Druntime=true` instead dispatches translated MPFR and GMP symbols through the platform loader; libc declarations stay directly linked.
 - Runtime loading requires the translated provider symbols and validates limb width and disabled float128/decimal options before publishing the dispatch table.
 - Vendored GMP's build glue carries linkage and version derivation in `vendor/gmp/build.zig`, sets `LIBGMP_DLL` from linkage in `vendor/gmp/zig/config_gen.zig`, and includes `Makefile.am` in `vendor/gmp/build.zig.zon` for version lookup; its C sources, headers, tests, and licence files remain unchanged.
+- Zig 0.17 embeds GMP's header and pkg-config templates with `@embedFile`, replacing configure-time reads through the removed `Build.build_root` field.
+- Vendored GMP uses Zig 0.17's `.debug` and `.safe` optimize tags; assertion configuration compares against `.debug`.
+- Zig 0.17 uses `@Int` for the signed integer types in the facade's precision and exponent bounds.
 - Only the standard target publishes the `mpfr` module; matrix targets use private modules so target order cannot change dependency resolution.
 - The default bundled-provider install owns both libraries, public headers, pkg-config files, and licence records; system-provider modes install only artifacts this package builds.
 - `check` and `matrix` compile targets but do not execute their binaries.

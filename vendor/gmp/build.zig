@@ -128,7 +128,7 @@ pub fn build(b: *std.Build) void {
     // failed instead of reporting one aggregate result for the matrix.
     const check_step = b.step("check", "Compile the public facade, tests and example");
     if (!target.query.isNative()) {
-        addTargetCheck(b, check_step, target.query, .Debug, linkage, "gmp-check");
+        addTargetCheck(b, check_step, target.query, .debug, linkage, "gmp-check");
     } else {
         for (checked_targets) |triple| {
             // Zig 0.16's `Target.Query` has no `arch_os_abi` field: a triple is
@@ -137,7 +137,7 @@ pub fn build(b: *std.Build) void {
             const query = std.Build.parseTargetQuery(.{ .arch_os_abi = triple }) catch |err| {
                 std.debug.panic("gmp: cannot parse checked target {s}: {s}", .{ triple, @errorName(err) });
             };
-            addTargetCheck(b, check_step, query, .Debug, linkage, b.fmt("gmp-check-{s}", .{triple}));
+            addTargetCheck(b, check_step, query, .debug, linkage, b.fmt("gmp-check-{s}", .{triple}));
         }
     }
 
@@ -412,7 +412,7 @@ fn pkgConfigSource(b: *std.Build) []const u8 {
         .{ "@PACKAGE_NAME@", "GNU MP" },
         .{ "@PACKAGE_VERSION@", packageVersion(b) },
     };
-    var text = readPackageFile(b, "gmp.pc.in");
+    var text: []const u8 = @embedFile("gmp.pc.in");
     for (substitutions) |substitution| {
         text = std.mem.replaceOwned(u8, b.allocator, text, substitution[0], substitution[1]) catch
             @panic("OOM");
@@ -429,7 +429,7 @@ fn pkgConfigSource(b: *std.Build) []const u8 {
 /// release the compiled library reports. `zig/config_gen.zig` commits to the
 /// same three numbers for the same reason.
 fn packageVersion(b: *std.Build) []const u8 {
-    const gmp_header = readPackageFile(b, "gmp-h.in");
+    const gmp_header = @embedFile("gmp-h.in");
     return b.fmt("{d}.{d}.{d}", .{
         macroNumber(b, gmp_header, "__GNU_MP_VERSION"),
         macroNumber(b, gmp_header, "__GNU_MP_VERSION_MINOR"),
@@ -510,8 +510,8 @@ fn generate(
 ) Generated {
     const output = b.addWriteFiles();
 
-    const gmp_h_in = readPackageFile(b, "gmp-h.in");
-    const config_in = readPackageFile(b, "config.in");
+    const gmp_h_in = @embedFile("gmp-h.in");
+    const config_in = @embedFile("config.in");
 
     const cflags = b.fmt("zig cc -O{s} -DNO_ASM", .{@tagName(optimize)});
     // Each renderer emits the fork's prologue and the substituted template, so
@@ -626,13 +626,6 @@ fn libtoolNumber(b: *std.Build, name: []const u8) u32 {
     @panic(b.fmt("vendor/gmp/Makefile.am no longer defines {s}", .{name}));
 }
 
-/// Read a file from the package root, which is the GMP release tree.
-fn readPackageFile(b: *std.Build, name: []const u8) []u8 {
-    return b.build_root.handle.readFileAlloc(b.graph.io, name, b.allocator, .limited(8 << 20)) catch |err| {
-        std.debug.panic("cannot read GMP template {s}: {s}", .{ name, @errorName(err) });
-    };
-}
-
 /// Build one of GMP's table generators for the host.
 ///
 /// The programs are built for the host because they only compute tables. What
@@ -647,7 +640,7 @@ fn generatorProgram(
 ) *std.Build.Step.Compile {
     const module = b.createModule(.{
         .target = b.graph.host,
-        .optimize = .ReleaseSafe,
+        .optimize = .safe,
         .link_libc = true,
     });
     // `gen-*.c` include `bootstrap.c` from the top of the GMP tree.

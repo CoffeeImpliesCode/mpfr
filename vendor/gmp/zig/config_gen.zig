@@ -224,7 +224,7 @@ pub fn paramsFor(target: std.Target, optimize: std.builtin.OptimizeMode, dll: bo
         // `any-windows-any/sys/types.h` declares no `quad_t`, while
         // `generic-glibc`, `generic-musl` and `any-darwin-any` all do.
         .have_quad_t = target.os.tag != .windows,
-        .want_assert = optimize == .Debug,
+        .want_assert = optimize == .debug,
     };
 }
 

@@ -324,7 +324,7 @@ pub const min_precision: Precision = 1;
 /// `((mpfr_prec_t)(((mpfr_uprec_t) -1) >> 1) - 256)`, instead of read from a
 /// macro, because this facade does not rely on macro translation.
 pub const max_precision: Precision = blk: {
-    const unsigned_max: mpfr.mpfr_uprec_t = @bitCast(@as(std.meta.Int(.signed, @bitSizeOf(mpfr.mpfr_uprec_t)), -1));
+    const unsigned_max: mpfr.mpfr_uprec_t = @bitCast(@as(@Int(.signed, @bitSizeOf(mpfr.mpfr_uprec_t)), -1));
     break :blk @as(Precision, @intCast(unsigned_max >> 1)) - 256;
 };
 
@@ -573,7 +573,7 @@ pub const ConversionError = error{
 
 /// `__MPFR_EXP_MAX` from src/mpfr.h:225, the largest `mpfr_exp_t`.
 const exp_max: Exponent = blk: {
-    const unsigned_max: mpfr.mpfr_uexp_t = @bitCast(@as(std.meta.Int(.signed, @bitSizeOf(mpfr.mpfr_uexp_t)), -1));
+    const unsigned_max: mpfr.mpfr_uexp_t = @bitCast(@as(@Int(.signed, @bitSizeOf(mpfr.mpfr_uexp_t)), -1));
     break :blk @intCast(unsigned_max >> 1);
 };
 

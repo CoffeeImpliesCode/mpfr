@@ -1,7 +1,7 @@
 .{
     .name = .mpfr_consumer,
     .version = "0.0.1",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0x90ae1261969170b0,
 
     // The fork itself, by relative path, exactly as a downstream user would

@@ -1,7 +1,7 @@
 # MPFR 4.2.2 as a Zig package
 
 This package builds GNU MPFR 4.2.2 and provides a typed Zig facade to its public C API.
-It targets Zig 0.16.0 and uses the vendored GMP snapshot by default.
+It targets Zig 0.17.0 and uses the vendored GMP snapshot by default.
 
 ## Source deviations from upstream
 

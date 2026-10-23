@@ -3,7 +3,7 @@
 This repository is the GNU Multiple Precision Arithmetic Library 6.3.0: the
 complete source tree of the official 6.3.0 release archive, imported as an
 archive (GMP's canonical SCM is Mercurial, so there is no upstream Git history
-and none is claimed) and packaged for Zig 0.16. `README` is upstream's own text
+and none is claimed) and packaged for Zig 0.17.0. `README` is upstream's own text
 and is unchanged; this file documents the Zig surface, and `UPSTREAM.md`
 records where the sources came from and how to re-verify them.
 
@@ -240,11 +240,11 @@ gmp.c.mpz_mul_ui(value.rawPtr(), value.rawSrcPtr(), 6);
 | `zig build provenance` | licence and provenance integrity gate |
 | `cd consumer && zig build run` | a separate package consuming this one |
 
-`zig build test` is meant to be run in both `Debug` and `ReleaseSafe`:
+`zig build test` is meant to be run in both `debug` and `safe`:
 
 ```sh
-zig build test -Doptimize=Debug
-zig build test -Doptimize=ReleaseSafe
+zig build test -Doptimize=debug
+zig build test -Doptimize=safe
 ```
 
 ## Supported targets
