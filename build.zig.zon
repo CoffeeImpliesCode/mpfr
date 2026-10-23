@@ -9,10 +9,7 @@
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x315544a3cf639019,
 
-    // The self-contained GMP snapshot required by the shared fork contract.
-    // It must be the parent's verified GMP package, including its own
-    // build.zig.zon, and it must declare the name `gmp` and expose
-    // `dep.artifact("gmp")`. `-Dsystem=gmp` selects an installed GMP instead.
+    // Bundled GMP is the default; `-Dsystem=gmp` selects an installed library.
     .dependencies = .{
         .gmp = .{
             .path = "vendor/gmp",
@@ -23,19 +20,15 @@
         "build.zig",
         "build.zig.zon",
         "root.zig",
-        // `build.zig` imports `zig/config_gen.zig`; a package that does not
-        // ship it cannot resolve the import when it is fetched by hash.
+        // Required by `build.zig`'s configuration import.
         "zig",
-        // The runtime route: `runtime/graph.zig` is imported by `build.zig` for
-        // the `-Druntime=true` route and the loader core it names is what that
-        // route resolves symbols through. A fetched package that did not ship
-        // the directory could not resolve the import.
+        // Runtime-loader sources.
         "runtime",
         "fork",
         "consumer/build.zig",
         "consumer/build.zig.zon",
         "consumer/src/main.zig",
-        // Upstream's own sources and licence terms, kept verbatim.
+        // Upstream sources and licence terms.
         "src",
         "doc",
         "examples",
@@ -52,8 +45,7 @@
         "INSTALL",
         "NEWS",
         "PATCHES",
-        // `build.zig` embeds the pkg-config template to install `mpfr.pc`, so
-        // a fetched package that did not ship it could not resolve the embed.
+        // Embedded by `build.zig` to generate `mpfr.pc`.
         "mpfr.pc.in",
         "README",
         "TODO",
@@ -70,31 +62,15 @@
         ".mailmap",
         ".gitignore",
         "vendor/gmp",
-        ".github",
-        // Fork provenance and divergence records.
+        // Fork provenance records.
         "UPSTREAM.md",
-        // The per-file SHA-256 baseline for every upstream byte this package
-        // carries, and the script that verifies it from the package root. Both
-        // are needed by a fetched package for the provenance claim to be
-        // checkable rather than only assertable.
+        // Baseline and script for upstream-byte provenance checks.
         "UPSTREAM-BASELINE.sha256",
         "check-upstream-baseline.sh",
         "CHANGELOG.md",
         "NOTICE.md",
         "FORK-NOTES.md",
         "README.zig.md",
-        // The fork README (written by this project's provenance role) and the
-        // packaging entry points it documents. They are listed here so a
-        // fetched or installed package carries the same provenance and
-        // packaging surface the build graph and its documentation describe;
-        // every one of them must exist, because a missing `.paths` entry is a
-        // package resolution failure.
-        //
-        // `flake.lock` exists in this tree, so it is named: the workspace's
-        // integration owner writes it, and a package that shipped `flake.nix`
-        // without it would re-resolve its own input on first evaluation instead
-        // of using the recorded one. `devenv.lock` is absent from this tree and
-        // is therefore not named; naming it would be a resolution failure.
         "README.md",
         "README.upstream.md",
         "FORK-LICENSE.md",

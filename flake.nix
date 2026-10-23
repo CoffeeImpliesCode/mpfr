@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Flake entry point. It owns no build logic: both variants and the devenv
-# outputs call `package.nix`.
-#
-# The nixpkgs input is a fixed revision. `flake.lock` is written by whoever owns
-# locks in this workspace; no hash appears here because none has been observed.
-#
-# Canonical development is `devenv`, not this flake.
+# Package outputs use `package.nix`; devenv is the canonical development environment.
 
 {
   description = "GNU MPFR 4.2.2 as a standalone Zig SDK";
@@ -18,8 +12,7 @@
     let
       inherit (nixpkgs) lib;
 
-      # Systems whose package outputs this flake exposes. MPFR builds for more;
-      # this is not a support claim.
+      # Nix output platforms, not the full target support set.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -31,9 +24,6 @@
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      # `zig = pkgs.zig_0_16` is named at both call sites on purpose:
-      # callPackage fills an omitted argument from the package set, and
-      # `pkgs.zig` is a moving alias, not the pinned compiler.
       packages = forAllSystems (pkgs: rec {
         static = pkgs.callPackage ./package.nix { zig = pkgs.zig_0_16; };
         shared = pkgs.callPackage ./package.nix {
@@ -41,11 +31,10 @@
           linkage = "dynamic";
         };
 
-        # The package's existing linkage policy is a static library.
         default = static;
       });
 
-      # Tools only. Opening a development environment must not build the SDK.
+      # Development tools only; opening the shell does not build the SDK.
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [

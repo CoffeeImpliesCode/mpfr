@@ -1,56 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//
-// Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
-//! grant and why it matches MPFR's own primary upstream terms.
 
-//! A downstream user of the MPFR fork, reached only through
-//! `b.dependency("mpfr", ...)`.
-//!
-//! Every line printed is a known answer, and every one of them is checked
-//! against the expectation before it is printed, so a behaviour change shows up
-//! as a non-zero exit rather than as silently different text. The expectations
-//! come from:
-//!
-//!  * doc/mpfr.texi:929-933 for 2.5 at two bits, and doc/mpfr.texi:936-943 for
-//!    95 at one decimal digit.
-//!  * tests/tdiv.c:848-854 for 1 / +0.
-//!  * exact rational arithmetic for the decimal renderings. `2^100` is exact
-//!    at 200 bits; `sqrt(2)` and `1/3` at 100 bits are rounded far below the
-//!    twentieth decimal digit, so their renderings are the exact values'; and
-//!    the rendering labelled 1/7 is the correctly rounded 24-bit form of the
-//!    thirty-digit base-2 literal, which is 153391689/2^30 and needs 28
-//!    significant bits, so it is not the exact literal.
-//!
-//!  * `src/mpfr.h:1162-1179` for the `__gmpfr_`-prefixed `intmax_t` entry
-//!    points, which are reached here through the raw module.
-//!
-//!  * `vendor/gmp/gmp-h.in:225-226, 683, 839, 855, 1042, 1053` and
-//!    `src/mpfr.h:487` for the integer block: MPFR's own API takes `mpz_t`
-//!    operands, so a downstream user of this package needs GMP out of the same
-//!    provider, and the one block below is what proves both halves arrived.
-//!
-//! ## The provider, in the runtime-loading configuration
-//!
-//! In the linked configuration the libraries are already available. In the
-//! runtime-loading configuration nothing is linked, so this program names its
-//! provider explicitly - `--provider <path>` on the command line, or the
-//! `MPFR_PROVIDER` environment variable - and stops with an explanation if it
-//! was told neither. It never falls back to a bundled or system copy.
+//! Consumer example for the MPFR facade and raw C API.
+//! Runtime builds require an explicit provider path.
 
 const std = @import("std");
 const Io = std.Io;
 const mpfr = @import("mpfr");
 
-/// The environment variable consulted when `--provider` was not given.
 const provider_variable = "MPFR_PROVIDER";
 
-/// A runtime-loading build has no provider until one is named.
 const ConfigurationError = error{NoProviderConfigured};
 
 pub fn main(init: std.process.Init) !void {
-    // The one explicit step the runtime-loading configuration asks for, before
-    // anything below can reach MPFR. It disappears at comptime in a linked
-    // build, which has nothing to load.
+    // Runtime builds load the named provider before any MPFR call.
     if (comptime mpfr.runtime_loaded) {
         const provider = try providerRequest(init);
         try mpfr.load(.{ .path = provider });
@@ -61,8 +23,6 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout_writer.interface;
     defer out.flush() catch {};
 
-    // The version is printed, not asserted: which release is pinned is the
-    // provenance job's business, and a release pin here would only re-state it.
     try out.print("mpfr {s}, reached through dep.module(\"mpfr\") {s}\n", .{
         mpfr.version(),
         if (mpfr.runtime_loaded) "after an explicit load" else "through the link line",
@@ -73,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
         try out.print("provider loaded from {s}\n", .{loaded.path});
     }
 
-    // 2.5 at two bits: the manual's own example, 10.1b rounding to 10.0b = 2.
+    // Manual example: 2.5 rounds to 2 at two bits (doc/mpfr.texi:929-933).
     {
         var x = try parse("2.5", 200);
         defer x.deinit();
@@ -92,8 +52,7 @@ pub fn main(init: std.process.Init) !void {
         });
     }
 
-    // 95 at one decimal digit: the manual says round-to-nearest gives 100,
-    // because the candidate integer significand 10 is the even one.
+    // Manual example: 95 rounds to 100 at one decimal digit (doc/mpfr.texi:936-943).
     {
         var x = mpfr.Float.init(64);
         defer x.deinit();
@@ -120,14 +79,8 @@ pub fn main(init: std.process.Init) !void {
         });
     }
 
-    // Arbitrary precision: 1/7, 1/3, sqrt(2) and 2^100 at working precisions
-    // wide enough that the renderings below are stable.
     {
-        // The thirty-digit base-2 literal is 153391689/2^30 exactly and needs
-        // 28 significant bits, so this parse rounds at 24 bits. The rendering
-        // below belongs to the rounded value 153391696/2^30: the literal's own
-        // twenty digits are 14285714272409677505, and 1/7 itself renders as
-        // 14285714285714285714.
+        // The 30-digit binary input needs 28 bits and rounds at this 24-bit precision.
         var seventh = mpfr.Float.init(24);
         defer seventh.deinit();
         try seventh.parseWhole("0.001001001001001001001001001001", 2, .nearest_even);
@@ -171,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
         try out.print("2^100: {s} (exponent {d})\n", .{ power_digits.digits(), power_digits.exponent });
     }
 
-    // 1 / +0 is a positive infinity, exact, with only the divide-by-zero flag.
+    // Upstream test: 1 / +0 returns positive infinity (tests/tdiv.c:848-854).
     {
         var numerator = mpfr.Float.init(64);
         defer numerator.deinit();
@@ -194,15 +147,12 @@ pub fn main(init: std.process.Init) !void {
         });
     }
 
-    // The raw C API is reachable through the same module. The write is asserted
-    // because it changes the value, not because any constant has a particular
-    // number: the escape hatch and the facade must agree on one value.
+    // The raw C API and facade write the same value.
     {
         var x = mpfr.Float.init(64);
         defer x.deinit();
         try expectEqual(@as(c_int, 0), mpfr.c.mpfr_set_ui_2exp(x.raw(), 1, 5, mpfr.c.MPFR_RNDN));
         try expectEqualF64(32.0, x.toF64(.nearest_even));
-        // And the facade writes the same value the other way round.
         try expect(x.setPowerOfTwo(5, .nearest_even) == .exact);
         try expectEqualF64(32.0, x.toF64(.nearest_even));
         try out.print("raw C API reachable: 2^5 written through mpfr.c and through the facade both read {d}\n", .{
@@ -210,28 +160,19 @@ pub fn main(init: std.process.Init) !void {
         });
     }
 
-    // The `intmax_t` entry points are why this package pins MPFR_USE_INTMAX_T on
-    // the compile line as well as on the translation: they are reached here
-    // through the `__gmpfr_` names MPFR's own macros impose
-    // (src/mpfr.h:1162-1179), so a library compiled without them fails here at
-    // link time in a real dependent rather than in a declaration nothing
-    // references. A `-Dsystem=mpfr` consumer should drop this block, because
-    // there the installed header decides which of those declarations exist.
+    // MPFR prefixes its pinned `intmax_t` entry points with `__gmpfr_` (src/mpfr.h:1162-1179).
+    // System-header builds may omit this declaration set.
     {
         var x = mpfr.Float.init(64);
         defer x.deinit();
 
-        // 1234567890123 needs 41 bits, so 64 holds it exactly and so does its
-        // `f64` conversion.
+        // This integer and its `f64` conversion are exact.
         try expectEqual(@as(c_int, 0), mpfr.c.__gmpfr_set_sj(x.raw(), -1234567890123, mpfr.c.MPFR_RNDN));
         try expectEqualF64(-1234567890123.0, x.toF64(.nearest_even));
-        // Typed from the call's own return type: `intmax_t` is a C typedef, so
-        // naming it here would be a guess about what `translate-c` called it.
+        // Infer `intmax_t` from the translated function's return type.
         const signed_value = mpfr.c.__gmpfr_mpfr_get_sj(x.rawConst(), mpfr.c.MPFR_RNDN);
         try expectEqual(@as(@TypeOf(signed_value), -1234567890123), signed_value);
 
-        // The unsigned counterpart reads back its own value, not the previous
-        // one, so the two entry points are not aliases of each other.
         try expectEqual(@as(c_int, 0), mpfr.c.__gmpfr_set_uj(x.raw(), 1234567890123, mpfr.c.MPFR_RNDN));
         try expectEqualF64(1234567890123.0, x.toF64(.nearest_even));
         const unsigned_value = mpfr.c.__gmpfr_mpfr_get_uj(x.rawConst(), mpfr.c.MPFR_RNDN);
@@ -240,19 +181,12 @@ pub fn main(init: std.process.Init) !void {
         try out.print("intmax_t entry points reachable: -1234567890123 in and out, 1234567890123 in and out\n", .{});
     }
 
-    // GMP is part of this package's surface, not an optional extra: MPFR's own
-    // API takes `mpz_t` operands (src/mpfr.h:487-488, 527, 544, 796-801), so a
-    // downstream user needs an integer from the same provider that the floating
-    // point comes from. The block below builds one, hands it to MPFR, reads it
-    // back and releases it, and every step is a checked consequence rather than
-    // a reachability claim.
+    // MPFR accepts `mpz_t`, so consumers need GMP from the same provider (src/mpfr.h:487-488, 527, 544).
     {
         var integer: mpfr.c.mpz_t = undefined;
         mpfr.c.__gmpz_init(&integer[0]);
         defer mpfr.c.__gmpz_clear(&integer[0]);
 
-        // 30 decimal digits, so the value does not fit any machine integer and
-        // GMP's own allocation is what holds it.
         try expectEqual(@as(c_int, 0), mpfr.c.__gmpz_set_str(
             &integer[0],
             "123456789012345678901234567890",
@@ -262,25 +196,18 @@ pub fn main(init: std.process.Init) !void {
 
         mpfr.c.__gmpz_set_ui(&integer[0], 255);
         try expectEqual(@as(c_ulong, 255), mpfr.c.__gmpz_get_ui(&integer[0]));
-        // 255 is `11111111`b, so eight bits are needed and four limbs would be
-        // far more than GMP needs.
         try expectEqual(@as(usize, 8), mpfr.c.__gmpz_sizeinbase(&integer[0], 2));
 
-        // The hand-off that makes this block about MPFR rather than about GMP:
-        // the integer becomes a floating value at an explicit precision.
         var x = mpfr.Float.init(200);
         defer x.deinit();
         try expectEqual(@as(c_int, 0), mpfr.c.mpfr_set_z(x.raw(), &integer[0], mpfr.c.MPFR_RNDN));
         try expectEqualF64(255.0, x.toF64(.nearest_even));
 
-        // ... and back the other way, which is the same allocation question in
-        // the opposite direction: `mpfr_get_z` stores into an integer this
-        // program owns and MPFR writes nothing into memory of its own.
+        // GMP owns the integer storage written by `mpfr_get_z`.
         var bigger = mpfr.Float.init(200);
         defer bigger.deinit();
         _ = bigger.setPowerOfTwo(100, .nearest_even);
         try expectEqual(@as(c_int, 0), mpfr.c.mpfr_get_z(&integer[0], bigger.rawConst(), mpfr.c.MPFR_RNDN));
-        // 2^100 is an exact integer, so nothing is rounded away.
         try expectEqual(@as(usize, 31), mpfr.c.__gmpz_sizeinbase(&integer[0], 10));
 
         try out.print("GMP integers reachable from the same provider: 255 -> {d}, 2^100 -> 31 digits\n", .{
@@ -292,11 +219,6 @@ pub fn main(init: std.process.Init) !void {
     mpfr.cleanupMemory();
 }
 
-/// The provider this process should load, named explicitly.
-///
-/// Both sources are explicit. Nothing looks in a default location, and nothing
-/// falls back to a linked copy: a runtime-loading build that was not told which
-/// file to load reports that it was not told, rather than loading something else.
 fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
     const args = init.minimal.args.toSlice(init.arena.allocator()) catch
         return noProvider();
@@ -311,8 +233,6 @@ fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
         return noProvider();
 }
 
-/// Say which variable is missing. An error name on its own would send the next
-/// person into the loader instead of to the command line.
 fn noProvider() ConfigurationError {
     std.debug.print(
         "mpfr consumer: this is a runtime-loading build. Pass --provider <path>, " ++
@@ -324,16 +244,8 @@ fn noProvider() ConfigurationError {
     return error.NoProviderConfigured;
 }
 
-/// Parse `text` in base 10 and return the value, which the caller then owns.
-///
-/// `parsePrefix` is used rather than `parseWhole` because exactness is a real
-/// property of the fixture that has to be checked, and this is the only entry
-/// point that reports it. A literal that this precision cannot hold exactly
-/// would invalidate every expectation compared against the returned value, so
-/// the helper reports it instead of handing back a value the caller would
-/// trust wrongly. Requiring the whole text to be consumed is what makes this
-/// a whole-string parse for the decimal literals used here, which is what
-/// `mpfr_set_str` requires of them.
+/// Parses the whole base-10 string exactly; the caller owns the returned value.
+/// Returns errors for trailing text or inexact input.
 fn parse(text: [:0]const u8, precision: mpfr.Precision) !mpfr.Float {
     var x = mpfr.Float.init(precision);
     errdefer x.deinit();
@@ -343,13 +255,8 @@ fn parse(text: [:0]const u8, precision: mpfr.Precision) !mpfr.Float {
     return x;
 }
 
-/// `numerator_value / denominator_value` at `precision` bits, correctly rounded.
-///
-/// The quotient is computed in the value that is returned, so one owner holds
-/// the significand and nothing is copied: `div` rounds its receiver in place.
-/// Each operand must survive `setUnsigned` exactly, which a `c_ulong` does not
-/// at every precision, and a rounded operand would silently make the quotient
-/// the wrong one.
+/// Returns the correctly rounded quotient at `precision` bits.
+/// Owns the result; errors if either operand is not exact.
 fn divide(numerator_value: c_ulong, denominator_value: c_ulong, precision: mpfr.Precision) !mpfr.Float {
     var quotient = mpfr.Float.init(precision);
     errdefer quotient.deinit();
@@ -377,9 +284,6 @@ fn expectEqual(expected: anytype, actual: anytype) !void {
     if (expected != actual) return error.ConsumerExpectationNotMet;
 }
 
-/// Exact equality of two `f64` values, which is what every expectation in this
-/// program asks: each compared value is one that MPFR holds exactly, so there
-/// is no tolerance to give.
 fn expectEqualF64(expected: f64, actual: f64) !void {
     if (actual != expected) return error.ConsumerExpectationNotMet;
 }

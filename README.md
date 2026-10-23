@@ -1,448 +1,59 @@
 # MPFR 4.2.2 as a Zig package
 
-A private downstream fork of [GNU MPFR](https://www.mpfr.org/) that builds the
-complete libmpfr from this repository with Zig 0.16.0, publishes a typed Zig
-facade over MPFR's public C API, and ships that facade as a standalone SDK with
-its own Nix packaging.
+This package builds GNU MPFR 4.2.2 and provides a typed Zig facade to its public C API.
+It targets Zig 0.16.0 and uses the vendored GMP snapshot by default.
 
-| | |
+## Source deviations from upstream
+
+- `.gitignore` adds rules for Zig, Nix, devenv and direnv build state.
+- No upstream C source, header, test, documentation or licence file is modified.
+- Fork-owned additions provide the facade (`root.zig`), C translation header (`fork/mpfr_all.h`), target configuration (`zig/config_gen.zig`), runtime loader and dispatch (`runtime/`), and example, tests and consumer (`fork/`, `consumer/`).
+
+## Build deviations
+
+- `build.zig` replaces autotools for this package and reads the upstream C source list from `src/Makefile.am`.
+- The build generates `mparam.h` from `src/mparam_h.in` and `get_patches.c` from `PATCHES` in the build directory.
+- Target-derived configuration macros are shared by C compilation and `translate-c`; the build enables the `intmax_t` API and does not enable float128, decimal floating point, mini-GMP or thread-safe caches.
+- Vendored GMP and MPFR use matching static or dynamic linkage. The install graph includes the bundled libraries, public headers, pkg-config files and licence records; system-provider routes install only artifacts built by this package.
+- Dynamic library versioning comes from MPFR's makefile metadata. The runtime-loaded module dispatches MPFR and GMP symbols through the platform loader; libc remains directly linked.
+
+## Support matrix
+
+The package build graph declares these compile targets:
+
+| Target | Note |
 | --- | --- |
-| Upstream | GNU MPFR 4.2.2, tag `4.2.2`, commit `eaa57b856d814af32f97d5e5eb129fb986235323` |
-| Compiler | Zig 0.16.0 |
-| Module / artifact | `mpfr` / `mpfr` |
-| Translated C module | `c`, reachable as `pub const c = @import("c")` |
-| GMP provider | `vendor/gmp`, a vendored snapshot of this workspace's GMP package |
-| Licence of libmpfr | LGPL-3.0-or-later (`COPYING`, `COPYING.LESSER`) |
-| Licence of this fork's own files | LGPL-3.0-or-later (`FORK-LICENSE.md`) |
+| `x86_64-linux-gnu` | |
+| `aarch64-linux-gnu` | |
+| `aarch64-macos-none` | |
+| `x86_64-windows-gnu` | Dynamic DLL export coverage is not guaranteed; static linkage is unaffected. |
+| `riscv64-linux-gnu` | |
+| `wasm32-wasi` | Vendored GMP uses WASI signal emulation. |
 
-Upstream's own `README` is preserved byte-for-byte in `README.upstream.md` and is
-the authority on MPFR itself. `UPSTREAM.md` records provenance, `NOTICE.md`
-records licensing, `CHANGELOG.md` records what this fork changed,
-`FORK-NOTES.md` records the issues met preparing it, and `README.zig.md` is the
-separate Zig interface documentation.
+Known boundaries: Hexagon is refused because vendored GMP has no port. NetBSD reaches an Aro `_Pragma` limitation in libc's stdio header; 32-bit OpenBSD reaches an Aro `stddef` conflict, and MIPS64 OpenBSD headers lack libc's expected byte-order macro.
 
----
+## Consumption
 
-## 1. Current native-source deviations
+Add the package to a consumer's `build.zig.zon`:
 
-**One upstream-tracked file differs from the pinned commit, and it differs
-additively.**
-
-| Path | Deviation | Why |
-| --- | --- | --- |
-| `.gitignore` | nineteen lines appended under marked comments: `/.zig-cache/`, `/zig-out/`, `/result`, `/.devenv*` and `/.direnv*` | a normal `zig build` creates the first two at the repository root, and `nix build` and `devenv`/`direnv` leave the rest; none of them may reach a downstream commit. Upstream's 37 lines are kept byte-for-byte and nothing is removed. |
-
-That is the complete list. Nothing under `src/`, `doc/`, `tests/`, `tools/`,
-`tune/`, `m4/`, `other/` or `examples/` is modified, and `COPYING`,
-`COPYING.LESSER`, `README`, `INSTALL`, `NEWS`, `ChangeLog`, `TODO`, `BUGS`,
-`AUTHORS`, `VERSION` and `PATCHES` are byte-identical to upstream. The
-provenance job in `.github/workflows/verify.yml` checks that by content rather
-than by a hand-written list, so a future upstream file cannot escape the gate.
-
-`UPSTREAM-BASELINE.sha256` is that check as a per-file record: a SHA-256 for each
-of the 2810 upstream paths this package ships, taken from the pinned upstream
-sources rather than from this tree, with `.gitignore` recorded as the one
-divergence. It also covers `vendor/gmp`, which the commit comparison cannot see,
-because the vendored GMP 6.3.0 snapshot is another package's tree. Run
-`./check-upstream-baseline.sh` to check it; CI runs the same script.
-
-One upstream *statement* is worth reading rather than inheriting:
-`src/mpfr.h:20-24` says this file list "does not apply to code retrieved by
-Git", which is exactly why the tree has no generated autotools files in it.
-
-Everything else this fork ships — `build.zig`, `build.zig.zon`, `zig/`, `root.zig`,
-`fork/`, `consumer/`, `.github/`, the Markdown records and the Nix files — is
-added, not modified. `NOTICE.md` lists it file by file.
-
-## 2. Current native-build deviations
-
-Upstream's build is autotools: `configure`, `make`, `libtool`. This fork
-compiles libmpfr with Zig instead and never invokes any of them. The autotools
-scaffolding stays in the tree, unmodified and unused, because deleting it would
-change the source set the provenance gate compares against the pinned commit.
-
-| Deviation | What upstream does | What this fork does |
-| --- | --- | --- |
-| Build system | `configure` + `make` + libtool | `zig build` only |
-| Source list | Automake expands `libmpfr_la_SOURCES` | read out of `src/Makefile.am` at build time, so a rebase cannot silently add or drop a translation unit; a missing assignment is a hard error, not a shorter library |
-| `mparam.h` | `configure` substitutes `src/mparam_h.in` | copied verbatim. The template holds no `@VAR@` substitution, so a copy is what `configure` writes |
-| `get_patches.c` | generated by `tools/get_patches.sh` from `PATCHES` | generated by a Zig reproduction of that script, including its licence header. `PATCHES` is empty at 4.2.2 |
-| Generated units' directory | built in the build directory (`nodist_libmpfr_la_SOURCES = $(BUILT_SOURCES)`, `src/Makefile.am:79`) | same: compiled out of an `addWriteFiles` directory, never from `src/` |
-| Configuration macros | `configure` probes the build machine | `zig/config_gen.zig` derives each fact from the **resolved target**, and the same list is put on both the library's compile line and the translation line |
-| CPU selection | `configure` leaves host CPU features | the Nix package builds pass `-Dcpu=baseline`. That constrains **Zig's own codegen only**: `zig/config_gen.zig` derives every macro from `target.result` (architecture, OS, ABI, endianness) and never from CPU features, so no MPFR or GMP decision changes. It is a declared option — `standardTargetOptions` declares `target`, `cpu`, `ofmt` and `dynamic-linker` (`std/Build.zig:1473-1483`), and Zig fails the build on any `-D` option nothing consumes (`:1647-1651`) |
-| Linkage | libtool, with `-version-info 8:2:2` (`src/Makefile.am:106`) | `-Dlinkage=static\|dynamic`. The default is `static`, which is what the recorded evidence was collected against |
-| Shared soname | libtool computes `libmpfr.so.6` from CURRENT-AGE = 8-2 | the same numbers, on the shared route: real name `libmpfr.so.6.2.2`, soname `libmpfr.so.6` |
-| GMP | autotools finds an installed GMP | a `.path` dependency on `vendor/gmp`, resolved against this package's own build root |
-| pkg-config | `mpfr.pc` generated by configure from `mpfr.pc.in` | installed to `$out/lib/pkgconfig/mpfr.pc`, rendered from that same `mpfr.pc.in`; GMP's `gmp.pc`, rendered from `vendor/gmp/gmp.pc.in`, is installed beside it |
-| Installation | `make install` | `zig build install --prefix $out`, which also writes `mpfr.pc`, `gmp.pc` and the licence records to `$out/share/licenses/{mpfr,gmp}/` |
-
-Two of those deserve their own paragraph.
-
-**Configuration macros go on both command lines.** `zig/config_gen.zig`
-reproduces the facts `configure` would have computed for the target being built,
-and `build.zig` puts every one of them on *both* C command lines: the one that
-compiles libmpfr, and the one `translate-c` parses `fork/mpfr_all.h` with. A
-macro that reaches only one of them leaves the translated declarations describing
-entry points the library never exports, and the failure shows up as an undefined
-symbol at link time with no explanation at the point of cause. `MPFR_WANT_FLOAT128`
-and `MPFR_WANT_DECIMAL_FLOATS` are deliberately left unset on both sides; so is
-`MPFR_USE_INTMAX_T`, deliberately set on both.
-
-**The GMP provider's linkage follows MPFR's.** `-Dlinkage` is forwarded to
-`vendor/gmp`, where it is a declared option, so the static route links GMP's
-objects from `libgmp.a` and the shared route records a real dynamic dependency on
-`libgmp.so`. The shared name is `libgmp.so.10.5.0` with soname `libgmp.so.10`,
-derived the same way as MPFR's own: `vendor/gmp/Makefile.am:107-109` sets
-`LIBGMP_LT_CURRENT = 15`, `LIBGMP_LT_REVISION = 0`, `LIBGMP_LT_AGE = 5`, which
-reach `-version-info 15:0:5` at `:294-295`, so the major is CURRENT-AGE = 10.
-
-This is what makes `__GMP_LIBGMP_DLL` meaningful rather than nominal. The
-snapshot renders it as a function of the selected linkage, not a constant
-(`vendor/gmp/zig/config_gen.zig:446-450`), and MPFR reads it twice:
-`src/mpfr.h:321-331` exports MPFR's entry points only when it is set, and
-`src/mpfr-impl.h:251-253` turns on `MPFR_WIN_THREAD_SAFE_DLL` in the same case.
-
-`-Dsystem=gmp` and `-Dsystem=mpfr` select an installed library instead and are
-always explicit. They are not the same shape, and neither is the default route.
-`-Dsystem=mpfr` compiles nothing of ours and installs nothing at all
-(`build.zig:772`, `:603-608`). `-Dsystem=gmp` still compiles libmpfr from this
-tree against the installed GMP and installs it, with both public headers,
-`lib/pkgconfig/mpfr.pc` and the six licence and provenance records under
-`share/licenses/mpfr/`; it installs no GMP at all — no libgmp, no
-`lib/pkgconfig/gmp.pc`, no GMP licence texts — because `installGmpClosure` runs
-only for the vendored artifact (`build.zig:613`), so in that mode the prefix is
-closed by the installed GMP rather than by this package.
-
-**One open item this README does not resolve.** A MinGW DLL's export surface is
-the one thing here that source alone does not settle, and it needs stating
-precisely in both directions.
-
-MPFR's own source text carries no `__declspec(dllexport)` — a count across
-`src/*.c` and `src/*.h` is zero, and the four `__declspec` uses there are
-`noreturn` (`src/mpfr-impl.h:167`), `thread` (`src/mpfr-thread.h:36`) and
-`deprecated` (`src/mpfr.h:356`). But on the shared route its decoration *is* an
-export annotation: `vendor/gmp/gmp-h.in:104` defines
-`__GMP_DECLSPEC_EXPORT` as `__declspec(__dllexport__)`, which `src/mpfr.h:321-331`
-adopts when `__MPFR_WITHIN_MPFR` and `__GMP_LIBGMP_DLL` are both set. It would
-therefore be wrong to say this route exports nothing.
-
-What is not established is whether that annotation covers every symbol. Upstream
-does not rely on it: it generates a `.def` from `nm` over the objects
-(`vendor/gmp/ltmain.sh:4643-4665`), and Zig 0.16's build API exposes no way to run
-that. No `.def` was invented, because a partial export list silently drops
-symbols and then fails somewhere else entirely. So
-`x86_64-windows-gnu -Dlinkage=dynamic` is PENDING-VERIFICATION and is the most
-likely failure in this delivery; the static route on that target is unaffected.
-`NOTICE.md` records the same question with its sources.
-
-### Dated history
-
-`CHANGELOG.md` is the dated history, numbered fork-locally and never after an
-upstream release:
-
-- §1–§5 — the Zig build and package as first written.
-- §6 — `parseWhole` returned a rounding direction it never had; corrected against
-  `src/set_str.c:24-33`.
-- §7 — the vendored GMP snapshot, and three Zig 0.16 shape errors in the build
-  script.
-- §8 — five of six cross targets compile; `wasm32-wasi` inherits GMP's signal
-  boundary.
-- §9 — 2026-10-03, Zig API contract alignment.
-- §10 — 2026-10-04, this contract migration: standalone Nix packaging, the
-  shared route, the installed pkg-config file, the preserved upstream README, and
-  the owner-authorized licence for the fork's own files.
-
-## 3. Current build / run / test matrix
-
-Two kinds of statement appear in this repository and they are never mixed. The
-table below is split accordingly.
-
-### Observed before this migration — historical
-
-These are driver-observed gates, recorded in the workspace ledger
-(`FORKS.json`, `forks[mpfr].verification`, receipts in
-`local://foundation-resume-evidence.json`) and summarized in `CHANGELOG.md` §8 and
-§9. They describe the tree as it stood **before** the 2026-10-04 contract
-migration, which changed `build.zig`, `build.zig.zon` and `vendor/gmp/build.zig`.
-
-| Gate | Command | Result |
-| --- | --- | --- |
-| fmt | `$ZIG fmt --check .` | passed, exit 0 |
-| build (Debug, native) | `zig build -j8 --summary all` | passed, 23/23 steps |
-| test + smoke (Debug, native) | `zig build test smoke -j8 --summary all` | passed, 69/69 tests |
-| test (ReleaseSafe, native) | `zig build test -Doptimize=ReleaseSafe -j8 --summary all` | passed, 69/69 tests |
-| smoke (Debug, native) | `zig build smoke -j8 --summary all` | passed |
-| check + matrix (all six targets) | `zig build check matrix -j8 --summary all` | **partial**, exit 1, 172/177 steps: five targets compile, `wasm32-wasi` fails |
-| consumer | `cd consumer && zig build run -j8 --summary all` | passed |
-| vendored GMP integrity | `diff -rq --exclude=.zig-cache --exclude=zig-out --exclude=.git gmp mpfr/vendor/gmp` | passed, no difference, at that checkpoint |
-
-`wasm32-wasi` is a **real platform boundary, not a defect in this package**, and
-it is not new. The vendored `vendor/gmp/invalid.c:80` reports an invalid
-operation by raising `SIGFPE`, and wasi-libc has no signal support, so its
-`signal.h` refuses to be included. GMP's own cross gate fails the same way and
-records it in `gmp/FORK-NOTES.md`. The target stays in the matrix, the attempt
-stays visible, and CI marks that one target `continue-on-error`. Nothing here
-invents a substitute for `raise`.
-
-The integrity row above is superseded by later comparisons, which are themselves
-still only source comparisons. On 2026-10-03 `diff -rq` reported one differing
-file, `build.zig`, where the snapshot carried one blank line more than the
-supplier. On 2026-10-04 the same command reports 26 differing paths and 14 paths
-the supplier has and the snapshot does not, because the supplier has since
-landed its own runtime route, provider file and packaging set. `UPSTREAM.md`,
-"Vendored GMP provider", records all three results, classifies every path in the
-current one, and supersedes both earlier claims. None of the three is a gate, and
-no gate compares the two source trees.
-
-### Observed on this tree — the source-bound cohort runs
-
-Four driver gates ran against this graph after the migration, and each names its
-own receipt. The 53-cell cohort is the source-bound one: its receipt records
-`source_stamp_before == source_stamp_after` (`8dae0747…`) with `target_jobs 8`
-and `jobs_per_build 8`.
-
-| Gate | Command | Result |
-| --- | --- | --- |
-| native eight cells — `zig build test smoke install`, static × dynamic crossed with Debug, ReleaseSafe, ReleaseFast, ReleaseSmall | as named, `-Druntime=false` | observed pass, exit 0 in all eight — `Build Summary: 46/46 steps succeeded; 69/69 tests passed` in every cell |
-| own-loaded eight cells — the same eight configurations with `-Druntime=true` and `MPFR_PROVIDER` naming this tree's own shared `libmpfr.so.6.2.2` (`provider.kind: "own"`) | as named | observed pass, exit 0 in all eight — `Build Summary: 47/47 steps succeeded; 69/69 tests passed` in every cell |
-| 53-cell `cross-test` cohort | `cross-test --jobs 8 --build-jobs 8` | **observed, exit 1** — raw `pass=19 fail=15 build_only=17 partial=2`, corrected `pass 19 / build_only 19 / build_fail 15`; every executed cell reports `tests=69` |
-| compile-only `zig build matrix` baseline, six triples | `zig build matrix -j8 --summary all` | observed pass, exit 0 — `Build Summary: 151/151 steps succeeded`, `declared_target_count 6`, all six named in the run's own step lines, `test_pass_lines: []` |
-
-Receipts: `native-final-evidence/20261004T233628757747Z-69351/run.json`,
-`loaded-final-evidence/20261004T232823091897Z-23133/run.json`,
-`20261004T221720228710Z-45046/mpfr-53-target-8.json`, and row
-`baseline-mpfr-matrix` of `baselines-and-configs/20261005T014547Z-797a73f2`.
-The cohort's counts are bounded to that epoch: nothing in them covers an edit to
-this graph that landed after `20261004T221720228710Z-45046`.
-
-**The fifteen build failures are four named boundaries, not fifteen defects.**
-Every one of them is a refusal or a translator limit *below* this package's own
-code, and each is reproduced in the cell's own build log.
-
-* **Nine NetBSD cells** — `aarch64-netbsd`, `aarch64_be-netbsd`, `arm-netbsd`,
-  `armeb-netbsd`, `mips-netbsd`, `mipsel-netbsd`, `powerpc-netbsd`, `x86-netbsd`,
-  `x86_64-netbsd` — all fail the same way:
-  `lib/libc/include/generic-netbsd/stdio.h:151:1: error: unknown type name
-  'pragma'` under `translate-c 65 errors`, reached because
-  `generic-netbsd/sys/cdefs.h:413` defines `__END_PUBLIC_DECLS` with
-  `_Pragma("GCC visibility pop")` and the vendored libc header is what Aro
-  destringizes.
-* **Three 32-bit OpenBSD cells** — `arm-openbsd`, `powerpc-openbsd`,
-  `x86-openbsd` — fail with `lib/compiler/aro/include/stddef.h:8:23: error:
-  typedef redefinition with different types ('unsigned int' vs '__size_t' (aka
-  'unsigned long'))`.
-* **Two 64-bit MIPS OpenBSD cells** — `mips64-openbsd`, `mips64el-openbsd` — fail
-  with `lib/libc/include/generic-openbsd/mips64/endian.h:40:2: error:
-  "__MIPSEL__ or __MIPSEB__ must be defined to define BYTE_ORDER!!!"`.
-* **One Hexagon cell** — `hexagon-linux` — is this package's own documented
-  refusal, not a translator limit: `error: mpfr: hexagon-linux: MPFR has no
-  buildable configuration for this target: GMP has no Hexagon port`, raised at
-  `build.zig:592`.
-
-Two cells reported `reason: partial_execution` — `aarch64-maccatalyst` and
-`arm-freebsd` — and the corrected audit counts both as `build_only`. **Nineteen
-build-only cells is not a pass**: they compiled and ran nothing, because no
-executor was available. The nineteen runtime passes and the nineteen build-only
-cells are 38 of 53; the other fifteen are the failures above.
-
-The `matrix` row is compile-only by construction and by the receipt's own
-`runtime_pass_claimed: false`; `test_pass_lines` is empty because that run printed
-no test count. The six cross targets it names are `x86_64-linux-gnu`,
-`aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`,
-`riscv64-linux-gnu`, `wasm32-wasi`.
-
-### Still pending for this migration
-
-The rows above settled the native, linked, loaded and cross-compile halves. These
-remain **PENDING-VERIFICATION**, and none of them has been run:
-
-| Gate | Command | Status |
-| --- | --- | --- |
-| installed C consumer | compile against `--prefix <install>` and link `-lmpfr -lgmp` | PENDING-VERIFICATION |
-| fetched Zig consumer | fetch this package by hash and build `consumer/` against it | PENDING-VERIFICATION |
-| typed and raw Zig consumers | `zig build run` in `consumer/` | PENDING-VERIFICATION |
-| runtime-loaded **consumer** binary | `zig build -Dlinkage=dynamic -Druntime=true install -j8`, then `cd consumer && zig build run -Druntime=true -j8 -- --provider ../zig-out/lib/libmpfr.so.6.2.2` | PENDING-VERIFICATION — the library side of this route *is* observed above (eight cells at `-Druntime=true` against an own shared libmpfr); what is unexercised is the consumer program resolving `--provider` |
-| Nix static derivation | `nix build .#static` | PENDING-VERIFICATION |
-| Nix shared derivation | `nix build .#shared` | PENDING-VERIFICATION |
-| canonical devenv shell | `devenv shell` | PENDING-VERIFICATION |
-| installed licence material | `$out/share/licenses/mpfr/` and `.../gmp/` populated by `build.zig` | PENDING-VERIFICATION |
-
-The `check` step shares the six-triple compile evidence with `matrix` and is not
-separately listed, because it runs no additional target in this graph. Nothing in
-this table is written as a pass, and no unrun gate may be reported as one.
-
-The runtime-loaded consumer row is the only one whose command has two halves,
-and the reason is not a packaging detail. Under `-Druntime=true` the facade
-reaches MPFR and GMP through the platform loader, so nothing is linked into the
-executable and the consumer has to be told which library to open with
-`--provider <path>` or `MPFR_PROVIDER` (`consumer/src/main.zig:32-38`). The
-supported provider is the shared libmpfr of this repository's own install tree:
-`zig-out/lib/libmpfr.so.6.2.2` sits beside `libgmp.so.10.5.0`, and libmpfr
-records `$ORIGIN`, so its own `DT_NEEDED` on `libgmp.so.10` resolves with no
-`LD_LIBRARY_PATH`. That is why the install runs first and why the run names a
-path rather than a directory. `consumer/build.zig` states the same thing at the
-build level, including why a build-cache path and `dep.artifact("gmp")` are
-neither of them a provider.
-
-### `stdio` reachability — observed, and scoped to that
-
-The private aggregate includes `<stdio.h>` before MPFR, so `c` declares
-`mpfr_out_str` and `mpfr_fprintf` (their native names are `__gmpfr_*`); libc
-types, streams and functions stay direct. On `x86_64-linux-gnu`, 2026-10-04,
-the real `__gmpfr_fprintf` proof passed **16/16 cells**: linked/loaded ×
-static/dynamic delivery × Debug/ReleaseSafe/ReleaseFast/ReleaseSmall.
-Both stdout and successfully opened streams received exactly `4.20e+01\n`
-(nine bytes). The tested null stream terminated by native signal, not a
-checked error. All loaded cells used the same existing Debug-dynamic
-`libmpfr.so.6.2.2` with sibling `libgmp.so.10` and `$ORIGIN` closure;
-no per-mode-provider or independent external-ABI claim follows.
-`FORK-NOTES.md` entry 2 records the commands and receipt.
-
-## 4. Consumption
-
-### From Zig, as a path dependency
-
-```sh
-zig build
-```
-
-then, in a dependent package's `build.zig.zon`:
-
-```nix
+```zig
 .dependencies = .{
     .mpfr = .{ .path = "../mpfr" },
 },
 ```
 
-and in its `build.zig`:
+Import the `mpfr` module in `build.zig`:
 
 ```zig
-const mpfr_dep = b.dependency("mpfr", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("mpfr", mpfr_dep.module("mpfr"));
-exe.root_module.linkLibrary(mpfr_dep.artifact("mpfr"));
+const dep = b.dependency("mpfr", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("mpfr", dep.module("mpfr"));
 ```
 
-`pub const c = @import("c")` inside the `mpfr` module exposes the complete
-translated public C API, including the `__gmpfr_`-prefixed names that MPFR's own
-macros impose on the `intmax_t` entry points. `README.zig.md` documents the
-typed facade — types, rounding, the ternary value, precision, exception flags,
-parsing and rendering, ownership, and the raw escape hatch — and is the file to
-read for the interface itself.
+The module is named `mpfr`; the library artifact is also named `mpfr` and is available as `dep.artifact("mpfr")`. The module carries the linked route's MPFR/GMP closure.
 
-### Commands
-
-```sh
-zig build            # install into zig-out
-zig build test       # run the behaviour suite
-zig build smoke      # run the deterministic example
-zig build run        # the same run step, under its explicit name
-zig build check      # compile the facade, the suite and the example; run nothing
-zig build matrix     # `check` for the six required targets; run nothing
-./check-upstream-baseline.sh   # every carried upstream byte against the pin
-```
-
-Add `-Dlinkage=static` or `-Dlinkage=dynamic` to any of them.
-
-### From C, through pkg-config
-
-```sh
-zig build install --prefix "$PREFIX"
-PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" pkg-config --cflags --libs mpfr
-```
-
-which yields `-I$PREFIX/include` and `-L$PREFIX/lib -lmpfr -lgmp`. That `Libs`
-line is upstream's own (`mpfr.pc.in:10`) and is preserved verbatim. `gmp.pc` is
-installed beside it in the same directory, rendered from the snapshot's own
-`vendor/gmp/gmp.pc.in`, but `Requires:` stays empty deliberately: `gmp.pc`
-declares no dependency of its own, so `Requires: gmp` would only restate the
-`-lgmp` that line already carries. `-lmpfr` alone is correct for the static
-route; for the shared route the loader must also be able to find `libgmp.so`,
-which is why a shared output contains both.
-
-### With Nix
-
-Canonical development is `devenv`. `.envrc` and `devenv.nix` are set up for it,
-and the shell carries tools, not the SDK: entering a shell must not require
-building the library.
-
-```sh
-devenv shell                          # the development environment
-nix build .#static                    # static variant
-nix build .#shared                    # shared variant
-devenv build outputs.static           # the same, from inside the devenv shell
-devenv build outputs.shared
-```
-
-`package.nix` is the single source-only derivation the flake and the devenv
-environment both call. It builds from this repository only: no `../` workspace
-import, no host account or store path, no download at build time. It installs
-nothing itself — the build graph owns every artifact, header, licence file and
-`.pc`, so there is one writer per path. The shared variant is a separate package
-attribute of one SDK, not a separate SDK. `static` names the installed artefact
-and is not a promise of a wholly static executable.
-
-`devenv task` reaches the same entry points the shell offers directly:
-`sdk:build`, `sdk:build:static`, `sdk:build:shared`, `sdk:test`,
-`sdk:test:release-safe`, `sdk:smoke`, `sdk:check`, `sdk:matrix`, `sdk:consumer`
-and `sdk:install`.
-
-Every one of them runs in this SDK's own directory, whichever directory you
-run it from. `devenv tasks run` and `devenv shell -- <script>` execute in the
-working directory of whoever invoked them, and `$DEVENV_ROOT` names that same
-directory — for a shell entered with `--from path:<sdk>` it is a project
-directory holding no `build.zig`, no `consumer/` and no
-`UPSTREAM-BASELINE.sha256` — so neither a bare `zig build` nor a relative
-`cd consumer` reaches this build graph from there. The root comes from
-`devenv.nix`'s own location, not from the environment.
-
-The tasks that install write outside the checkout. `zig build`'s own default
-prefix is `zig-out` in the source tree, so `sdk:build`, `sdk:build:static`,
-`sdk:build:shared` and `sdk:install` pass `--prefix` beneath
-`$ZIG_LOCAL_CACHE_DIR`: `…/mpfr-install/static` for the three static bodies,
-`…/mpfr-install/dynamic` for the shared one, each printed before the build so a
-log says which task wrote where. `enterShell` exports `ZIG_LOCAL_CACHE_DIR` and
-`ZIG_GLOBAL_CACHE_DIR` only when the caller has not, from `$XDG_CACHE_HOME` or
-else `$TMPDIR`, and a task reaches for the same three names in the same order
-because `devenv tasks run` does not run that hook. A caller who set none of
-them gets a stopped task naming the three, not an invented directory.
-
-`sdk:consumer` runs the dependent package from `consumer/` with its own
-`--cache-dir` under the same root, because two build graphs must not share one
-manifest and the consumer is a second build root. `sdk:test`,
-`sdk:test:release-safe`, `sdk:smoke`, `sdk:check` and `sdk:matrix` compile and
-run without installing, so they pass no `--prefix` and invent nothing.
-
-Every one of those commands passes the same `-j8 --summary all` to `zig build`,
-so all ten build eight jobs at a time and report the same summary, and each
-names its cache directory outright: a `zig build` that is not told one creates
-`.zig-cache` inside the checkout. The flags are defined once in `devenv.nix`
-and applied exactly once per command, so no task can end up with two job flags
-on one invocation. A task fills and exports `ZIG_LOCAL_CACHE_DIR` and
-`ZIG_GLOBAL_CACHE_DIR` itself, in the order above, before it reaches the
-compiler — `devenv tasks run` does not run that hook — and only where the
-caller left them unset, so an exported value is kept as it was.
-
-The provenance gate is the script this repository ships: it cds to its own
-directory and asks five questions of the tree, of which a bare
-`sha256sum -c UPSTREAM-BASELINE.sha256` is one.
-`./check-upstream-baseline.sh` answers all five. It is a command, not a
-build-graph entry point, so `devenv` names no task for it.
-
-### What this package depends on, and what that dependency costs
-
-MPFR cannot be built without GMP, and `src/mpfr.h:52` includes `<gmp.h>`, so a
-real, ABI-correct GMP header is required — mini-gmp is not GMP and
-`MPFR_USE_MINI_GMP` is never defined. The default provider is the vendored
-snapshot in `vendor/gmp`, which is built as part of this package and installed
-into the same output.
-
-MPFR allocates through GMP: `src/mpfr-gmp.c:313`, `:324` and `:335` each call
-`mp_get_memory_functions` and invoke the returned function, and
-`src/free_cache.c:77-80` records that MPFR's own caches are allocated with GMP's
-current allocator. **This package is therefore bound to the GMP image it is built
-with.** No claim is made that it works against another GMP build, another GMP
-version, another allocator or another GMP ABI, and neither a version string nor
-the presence of `mp_get_memory_functions` in both libraries would establish any
-of that. A consumer of `<mpfr.h>` links GMP as well, so a process must reach
-exactly one GMP state. `NOTICE.md`, "The allocator is part of the dependency, not
-a version detail", records this in full.
+| Option | Effect |
+| --- | --- |
+| `-Dlinkage=static` (default) or `dynamic` | Selects the MPFR artifact linkage; bundled GMP uses the same linkage. |
+| `-Dsystem=gmp` | Uses an installed GMP while building MPFR. |
+| `-Dsystem=mpfr` | Uses installed MPFR headers and library; this package builds no MPFR artifact. |
+| `-Druntime=true` | Uses runtime dispatch instead of linking MPFR and GMP; call `load` with an explicit provider before other MPFR calls. |

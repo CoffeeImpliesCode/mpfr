@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# One source-only derivation. `flake.nix` and `devenv.nix` both call it, so the
-# two entry points cannot describe different packages.
-#
-# The build graph owns C flags, source lists, header configuration and every
-# installed artifact, header, licence file and `.pc`. Nothing here restates them.
-# GMP comes from the in-tree `vendor/gmp` snapshot; there is no `../` import, no
-# fetched source and no build-time download.
+# Both the flake and devenv use this source derivation.
 
 { lib, stdenv, zig, linkage ? "static", optimize ? "ReleaseSafe" }:
 
@@ -16,10 +10,7 @@ stdenv.mkDerivation {
 
   src = lib.cleanSourceWith {
     src = ./.;
-    # Lock files are the workspace integration owner's, they are inputs to the
-    # flake frontend rather than to this derivation, and nothing in
-    # `installPhase` reads one. Keeping them out means a re-lock does not
-    # invalidate an unchanged library build.
+    # Exclude workspace locks and build outputs from derivation inputs.
     filter = path: _type:
       let base = baseNameOf (toString path); in
       !(lib.elem base [
@@ -40,8 +31,7 @@ stdenv.mkDerivation {
   strictDeps = true;
   nativeBuildInputs = [ zig ];
 
-  # `installPhase` below is the only real phase. `dontInstall` stays unset:
-  # setting it would disable that phase rather than run it.
+  # Do not set `dontInstall`; `installPhase` implements installation.
   dontConfigure = true;
   dontBuild = true;
   dontCheck = true;
@@ -49,8 +39,7 @@ stdenv.mkDerivation {
   dontAddPrefix = true;
   dontSetZigDefaultFlags = true;
 
-  # Both caches live under the build's TMPDIR, outside the unpacked source, so
-  # the sandbox never reaches $HOME and the local cache stays clean.
+  # Keep Zig caches in `TMPDIR`, outside the unpacked source.
   installPhase = ''
     runHook preInstall
 
@@ -78,10 +67,7 @@ stdenv.mkDerivation {
       so the dynamic output is closed only together with its shared dependency.
     '';
 
-    # The installed output is LGPL-3.0-or-later: libmpfr under MPFR's terms, and
-    # the vendored GMP under the LGPLv3 side of GMP's dual offer, which is the
-    # side this fork builds. The source tree is mixed; `NOTICE.md` is the
-    # inventory and `FORK-LICENSE.md` covers this fork's own files.
+    # Installed output is LGPL-3.0-or-later; see `NOTICE.md` for licence groups.
     license = lib.licenses.lgpl3Plus;
     licenseFile = "share/licenses/mpfr/COPYING.LESSER";
     licenseNote = ''
