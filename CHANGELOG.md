@@ -1,5 +1,6 @@
 # Changelog
 
+- Replaced the GMP snapshot with a pinned URL dependency; the install retains matching libraries, headers, pkg-config files, and licences.
 - Corrected system-provider flags to `-fsys=gmp` and `-fsys=mpfr`, including runtime-loading configurations.
 
 Changes from GNU MPFR 4.2.2.

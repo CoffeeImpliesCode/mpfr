@@ -16,9 +16,6 @@ const graph = @import("runtime/graph.zig");
 
 const gmp_package = "gmp";
 
-/// Default bundled GMP dependency path.
-const vendored_gmp = "vendor/gmp";
-
 const library_name = "mpfr";
 
 /// Upstream's C source list, read from Automake.
@@ -30,12 +27,6 @@ const patches_file = @embedFile("PATCHES");
 const pkg_config_template = @embedFile("mpfr.pc.in");
 
 const version_file = @embedFile("VERSION");
-
-/// GMP's pkg-config template, installed as `gmp.pc`.
-const gmp_pkg_config_template = @embedFile("vendor/gmp/gmp.pc.in");
-
-/// GMP's header template, used to derive its package version.
-const gmp_header_template = @embedFile("vendor/gmp/gmp-h.in");
 
 /// Derive the shared-library version from upstream's libtool flags (`src/Makefile.am:106`).
 fn sharedLibraryVersion(b: *std.Build) std.SemanticVersion {
@@ -138,40 +129,12 @@ fn refusalFor(target: std.Build.ResolvedTarget) ?Refusal {
         return .{
             .summary = "MPFR has no buildable configuration for this target: GMP has no Hexagon port.",
             .detail =
-            \\GMP 6.3.0 ships no port for this CPU. There is no mpn/hexagon
-            \\directory and no tune/hexagon.asm, and the word "hexagon" appears
-            \\in neither vendor/gmp/configure.ac nor the config.sub and
-            \\config.guess that the shipped configure runs
-            \\(vendor/gmp/configure:3047-3053). It appears only in the
-            \\configfsf.guess/configfsf.sub pair, which that configure never
-            \\invokes. Upstream's own configure therefore rejects the triple
-            \\before it reaches the mpn selection, and --disable-assembly
-            \\(configure.ac:2670-2672, which sets path="generic") is the
-            \\documented "no assembly for this CPU" fallback rather than a
-            \\port.
+            \\GMP 6.3.0 has no Hexagon port (gmp package: configure.ac).
+            \\The GMP limb configuration and MPFR double-format tables do not
+            \\support this CPU.
             \\
-            \\Neither of this package's own configuration tables records the CPU
-            \\either. vendor/gmp/zig/config_gen.zig:122-171 names every
-            \\std.Target.Cpu.Arch it supports and then refuses the rest (:169),
-            \\and zig/config_gen.zig:236-272 does the same for the C double
-            \\format (:267). Both are these forks' own guards reporting an
-            \\architecture they hold no facts for; neither is a compiler
-            \\diagnostic, and neither is an MPFR defect.
-            \\
-            \\Adding an arm to either table would assert ABI facts this
-            \\repository cannot check — limb size, endianness and double format
-            \\for a CPU GMP does not port — and would claim a build nobody has
-            \\run. So the target is refused here, and this text is what the
-            \\refusal reports.
-            \\
-            \\Nothing was substituted: no libmpfr, no libgmp, no test binary and
-            \\no installed prefix for this target, and no result is claimed for
-            \\one. The target keeps its place in every matrix that walks this
-            \\package, and this text is what that cell reports.
-            \\
-            \\Build for a target this package configures: x86_64-linux-gnu,
-            \\aarch64-linux-gnu, aarch64-macos-none, x86_64-windows-gnu,
-            \\riscv64-linux-gnu.
+            \\Build for x86_64-linux-gnu, aarch64-linux-gnu, aarch64-macos-none,
+            \\x86_64-windows-gnu, riscv64-linux-gnu, or wasm32-wasi.
             ,
         };
     }
@@ -222,8 +185,8 @@ pub fn build(b: *std.Build) error{UnsupportedTarget}!void {
         installPkgConfig(b);
         installLicenceRecords(b);
     }
-    // Install vendored GMP only for the published target graph.
-    if (native.vendored_gmp) |gmp| installGmpClosure(b, gmp);
+    // Install the GMP closure only for the published target graph.
+    if (native.gmp_dependency) |dep| installGmpClosure(b, dep);
 
     const run_example = b.addRunArtifact(native.example);
     run_example.addPassthruArgs();
@@ -268,8 +231,8 @@ pub fn build(b: *std.Build) error{UnsupportedTarget}!void {
 /// Build steps for one resolved target.
 const Graph = struct {
     library: ?*std.Build.Step.Compile,
-    /// Vendored GMP dependency, absent in system mode.
-    vendored_gmp: ?*std.Build.Step.Compile,
+    /// GMP package, absent in system-provider modes.
+    gmp_dependency: ?*std.Build.Dependency,
     tests: *std.Build.Step.Compile,
     example: *std.Build.Step.Compile,
 };
@@ -287,20 +250,20 @@ fn wireUp(
     publish: bool,
 ) Graph {
     const generated = generateUpstreamSources(b);
-    // System MPFR must use its installed GMP headers, not the vendored tree.
+    // System MPFR must use its installed GMP headers.
     // Upstream's MinGW checks require matching linkage (`configure.ac:635-662`).
-    const gmp = if (use_system_mpfr or use_system_gmp)
+    const gmp_dep = if (use_system_mpfr or use_system_gmp)
         null
     else
-        gmpDependency(b, target, optimize, linkage).artifact(gmp_package);
+        gmpDependency(b, target, optimize, linkage);
+    const gmp = if (gmp_dep) |dep| dep.artifact(gmp_package) else null;
     // Use headers emitted with the GMP artifact; system routes already have them.
     const gmp_include = if (gmp) |artifact| artifact.getEmittedIncludeTree() else null;
 
     // Share target-derived macros between translation and C compilation.
     const definitions = macroDefinitions(b, target.result);
 
-    // The public C module. `src/` joins the include path in vendored mode only,
-    // so system mode translates the installed headers instead.
+    // System mode translates installed MPFR headers instead of `src/`.
     const translate = b.addTranslateC(.{
         .root_source_file = b.path("fork/mpfr_all.h"),
         .target = target,
@@ -369,9 +332,8 @@ fn wireUp(
             // Translated headers expose GMP symbols, so dependents must link GMP directly.
             // Shared `libmpfr`'s indirect `DT_NEEDED` does not satisfy direct references.
             // System `mpfr.pc` supplies its own `-lgmp` closure.
-            if (gmp) |vendored| {
-                // Add the same bundled GMP artifact explicitly.
-                mpfr_module.linkLibrary(vendored);
+            if (gmp) |artifact| {
+                mpfr_module.linkLibrary(artifact);
             } else if (use_system_gmp) {
                 // Resolve the same system GMP selected for compilation.
                 mpfr_module.linkSystemLibrary(gmp_package, .{ .use_pkg_config = .force });
@@ -383,7 +345,7 @@ fn wireUp(
 
     return .{
         .library = library,
-        .vendored_gmp = gmp,
+        .gmp_dependency = gmp_dep,
         .tests = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path("fork/tests/all_tests.zig"),
@@ -484,24 +446,13 @@ fn linkInstalledSibling(
     if (installedLibraryRPath(target)) |rpath| module.addRPathSpecial(rpath);
 }
 
-/// Resolve bundled GMP from this package root and report a missing snapshot clearly.
+/// Resolve GMP with matching target, optimization, and linkage.
 fn gmpDependency(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.lang.Optimize,
     linkage: std.lang.LinkMode,
 ) *std.Build.Dependency {
-    b.dependOnDirectoryMetadata(b.path(vendored_gmp));
-    if (b.root.access(b.graph.io, vendored_gmp, .{})) |_| {} else |_| {
-        @panic(
-            "mpfr: " ++ vendored_gmp ++ " is missing or unreadable. MPFR cannot be " ++
-                "built without GMP, and the shared fork contract requires a " ++
-                "self-contained snapshot: copy the verified GMP package there, " ++
-                "including its build.zig.zon, or pass -fsys=gmp to use an " ++
-                "installed GMP instead.",
-        );
-    }
-    // Forward the selected linkage to the bundled GMP package.
     return b.dependency(gmp_package, .{
         .target = target,
         .optimize = optimize,
@@ -515,12 +466,26 @@ fn markPublicHeaders(b: *std.Build, library: *std.Build.Step.Compile) void {
     library.installHeader(b.path("src/mpf2mpfr.h"), "mpf2mpfr.h");
 }
 
-/// Install vendored GMP, its pkg-config file, and licence files.
-fn installGmpClosure(b: *std.Build, gmp: *std.Build.Step.Compile) void {
-    b.installArtifact(gmp);
-    installGmpPkgConfig(b);
+/// Install GMP's artifact, generated pkg-config file, and licence texts.
+fn installGmpClosure(b: *std.Build, dep: *std.Build.Dependency) void {
+    b.installArtifact(dep.artifact(gmp_package));
+    var installed_pkgconfig = false;
+    for (dep.builder.getInstallStep().dependencies.items) |step| {
+        const file = step.cast(std.Build.Step.InstallFile) orelse continue;
+        if (file.dir != .lib or !std.mem.eql(u8, file.dest_rel_path, "pkgconfig/gmp.pc")) continue;
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+            file.source,
+            .lib,
+            file.dest_rel_path,
+        ).step);
+        installed_pkgconfig = true;
+    }
+    if (!installed_pkgconfig) @panic("gmp package does not install lib/pkgconfig/gmp.pc");
     for (gmp_licence_files) |name| {
-        b.installFile(b.fmt("{s}/{s}", .{ vendored_gmp, name }), b.fmt("share/licenses/gmp/{s}", .{name}));
+        b.getInstallStep().dependOn(&b.addInstallFile(
+            dep.path(name),
+            b.fmt("share/licenses/gmp/{s}", .{name}),
+        ).step);
     }
 }
 
@@ -558,67 +523,6 @@ fn pkgConfigSource(b: *std.Build) []const u8 {
             @panic("OOM");
     }
     return text;
-}
-
-/// Render GMP's required `gmp.pc` from the vendored template (`vendor/gmp/Makefile.am:121-122`).
-fn installGmpPkgConfig(b: *std.Build) void {
-    const out = b.addWriteFiles();
-    _ = out.add("gmp.pc", gmpPkgConfigSource(b));
-    b.getInstallStep().dependOn(&b.addInstallFile(
-        out.getDirectory().path(b, "gmp.pc"),
-        "lib/pkgconfig/gmp.pc",
-    ).step);
-}
-
-/// Render the vendored GMP pkg-config template with its configure substitutions.
-fn gmpPkgConfigSource(b: *std.Build) []const u8 {
-    const substitutions = [_][2][]const u8{
-        .{ "@prefix@", "${pcfiledir}/../.." },
-        .{ "@exec_prefix@", "${prefix}" },
-        .{ "@libdir@", "${prefix}/lib" },
-        .{ "@includedir@", "${prefix}/include" },
-        // Upstream sets `PACKAGE_NAME` to `GNU MP` (`vendor/gmp/configure.ac:40`).
-        .{ "@PACKAGE_NAME@", "GNU MP" },
-        .{ "@PACKAGE_VERSION@", gmpPackageVersion(b) },
-    };
-    var text: []const u8 = gmp_pkg_config_template;
-    for (substitutions) |substitution| {
-        text = std.mem.replaceOwned(u8, b.allocator, text, substitution[0], substitution[1]) catch
-            @panic("OOM");
-    }
-    return text;
-}
-
-/// Read GMP's version from its `gmp-h.in` template.
-fn gmpPackageVersion(b: *std.Build) []const u8 {
-    return b.fmt("{d}.{d}.{d}", .{
-        gmpHeaderMacroNumber(b, "__GNU_MP_VERSION"),
-        gmpHeaderMacroNumber(b, "__GNU_MP_VERSION_MINOR"),
-        gmpHeaderMacroNumber(b, "__GNU_MP_VERSION_PATCHLEVEL"),
-    });
-}
-
-/// Parse a numeric `#define` from the GMP header template or refuse.
-fn gmpHeaderMacroNumber(b: *std.Build, name: []const u8) u32 {
-    const prefix = b.fmt("#define {s}", .{name});
-    var lines = std.mem.splitScalar(u8, gmp_header_template, '\n');
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t");
-        if (!std.mem.startsWith(u8, trimmed, prefix)) continue;
-        const after = trimmed[prefix.len..];
-        // Require a token boundary to distinguish the version macro names.
-        if (after.len == 0) continue;
-        if (after[0] != ' ' and after[0] != '\t') continue;
-        const value = std.mem.trim(u8, after, " \t");
-        return std.fmt.parseInt(u32, value, 10) catch {
-            @panic(b.fmt(
-                "vendor/gmp/gmp-h.in: {s} is not a number ('{s}'); refusing to " ++
-                    "install a pkg-config Version of guesswork",
-                .{ name, value },
-            ));
-        };
-    }
-    @panic(b.fmt("vendor/gmp/gmp-h.in no longer defines {s}", .{name}));
 }
 
 /// Produce the generated inputs listed by Automake.

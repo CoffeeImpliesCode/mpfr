@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
         "linkage",
         "Which delivery of libmpfr the dependency builds: a static archive or a " ++
             "shared library. Forwarded to the library's own -Dlinkage, which " ++
-            "also selects the vendored GMP build libmpfr links against. Left " ++
+            "also selects the GMP package build libmpfr links against. Left " ++
             "unset, the option is not passed on and the library's own default " ++
             "decides.",
     );

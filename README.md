@@ -1,7 +1,7 @@
 # MPFR 4.2.2 as a Zig package
 
 This package builds GNU MPFR 4.2.2 and provides a typed Zig facade to its public C API.
-It targets Zig 0.17.0 and uses the vendored GMP snapshot by default.
+It targets Zig 0.17.0 and fetches the GMP package pinned in `build.zig.zon` by default.
 
 ## Source deviations from upstream
 
@@ -14,7 +14,7 @@ It targets Zig 0.17.0 and uses the vendored GMP snapshot by default.
 - `build.zig` replaces autotools for this package and reads the upstream C source list from `src/Makefile.am`.
 - The build generates `mparam.h` from `src/mparam_h.in` and `get_patches.c` from `PATCHES` in the build directory.
 - Target-derived configuration macros are shared by C compilation and `translate-c`; the build enables the `intmax_t` API and does not enable float128, decimal floating point, mini-GMP or thread-safe caches.
-- Vendored GMP and MPFR use matching static or dynamic linkage. The install graph includes the bundled libraries, public headers, pkg-config files and licence records; system-provider routes install only artifacts built by this package.
+- The GMP dependency and MPFR use matching static or dynamic linkage. The install graph includes the bundled libraries, public headers, pkg-config files and licence records; system-provider routes install only artifacts built by this package.
 - Dynamic library versioning comes from MPFR's makefile metadata. The runtime-loaded module dispatches MPFR and GMP symbols through the platform loader; libc remains directly linked.
 
 ## Support matrix
@@ -28,9 +28,9 @@ The package build graph declares these compile targets:
 | `aarch64-macos-none` | |
 | `x86_64-windows-gnu` | Dynamic DLL export coverage is not guaranteed; static linkage is unaffected. |
 | `riscv64-linux-gnu` | |
-| `wasm32-wasi` | Vendored GMP uses WASI signal emulation. |
+| `wasm32-wasi` | The GMP dependency uses WASI signal emulation. |
 
-Known boundaries: Hexagon is refused because vendored GMP has no port. NetBSD reaches an Aro `_Pragma` limitation in libc's stdio header; 32-bit OpenBSD reaches an Aro `stddef` conflict, and MIPS64 OpenBSD headers lack libc's expected byte-order macro.
+Known boundaries: Hexagon is refused because the GMP dependency has no port. NetBSD reaches an Aro `_Pragma` limitation in libc's stdio header; 32-bit OpenBSD reaches an Aro `stddef` conflict, and MIPS64 OpenBSD headers lack libc's expected byte-order macro.
 
 ## Consumption
 

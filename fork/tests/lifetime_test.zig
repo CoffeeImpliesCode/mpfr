@@ -16,8 +16,8 @@
 //! (doc/mpfr.texi:3325-3333); `mpfr_free_cache` and `mpfr_mp_memory_cleanup`
 //! release the cached constants and pools (doc/mpfr.texi:1182-1226);
 //! `GMP_NUMB_BITS` is `GMP_LIMB_BITS - GMP_NAIL_BITS`
-//! (vendor/gmp/gmp-h.in:44-47) and `__gmp_bits_per_limb` is GMP's own exported
-//! object (vendor/gmp/mp_bpl.c:32); the two `mpfr_buildopt_*` answers follow
+//! (gmp package: gmp-h.in:44-47) and `__gmp_bits_per_limb` is GMP's exported
+//! object (gmp package: mp_bpl.c:32); the two `mpfr_buildopt_*` answers follow
 //! from `MPFR_WANT_FLOAT128` and `MPFR_WANT_DECIMAL_FLOATS`
 //! (src/buildopt.c:35-53, src/mpfr.h:470-486, 530-533).
 
@@ -176,10 +176,10 @@ test "the provider's exported limb width is the one this header describes" {
     try support.requireProvider();
 
     // `GMP_NUMB_BITS` is `GMP_LIMB_BITS - GMP_NAIL_BITS` from the translated
-    // gmp.h (`vendor/gmp/gmp-h.in:44-47`), and `GMP_NAIL_BITS` is 0 in every
+    // gmp.h (gmp package: `gmp-h.in:44-47`), and `GMP_NAIL_BITS` is 0 in every
     // configuration GMP ships. `__gmp_bits_per_limb` is the object GMP itself
-    // exports (`vendor/gmp/mp_bpl.c:32`), under the name gmp.h gives it
-    // (`vendor/gmp/gmp-h.in:489-490`).
+    // exports (gmp package: `mp_bpl.c:32`), under the name gmp.h gives it
+    // (gmp package: `gmp-h.in:489-490`).
     //
     // In a runtime-loading build this reads the provider's own object through
     // the generated address accessor rather than a copy of its value; in a

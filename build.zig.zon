@@ -12,7 +12,8 @@
     // Bundled GMP is the default; `-fsys=gmp` selects an installed library.
     .dependencies = .{
         .gmp = .{
-            .path = "vendor/gmp",
+            .url = "git+https://github.com/CoffeeImpliesCode/gmp?ref=v6.3.0#c124ccbaf2072c438a7e8def5addc628c65ab74e",
+            .hash = "gmp-6.3.0-FVVS2nj8CwF5oxyvYkR6LzJuPs5MgvaDC7zf-xWIJX--",
         },
     },
 
@@ -61,7 +62,6 @@
         "version-ext.sh",
         ".mailmap",
         ".gitignore",
-        "vendor/gmp",
         // Fork provenance records.
         "UPSTREAM.md",
         // Baseline and script for upstream-byte provenance checks.

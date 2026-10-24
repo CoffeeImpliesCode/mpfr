@@ -29,21 +29,18 @@
 - `zig/config_gen.zig` derives feature macros from the resolved target and applies the same definitions to C compilation and `translate-c`. The library uses `HAVE_STDINT_H`; `fork/mpfr_all.h` enables `MPFR_USE_INTMAX_T` for translation.
 - Configuration defines only target-known features. Float128, decimal floating point, mini-GMP, GMP internals, and thread-safe caches are not enabled; generic paths cover unrecorded long-double and locale formats.
 - `-Dcpu=baseline` constrains Zig code generation only; MPFR configuration comes from the resolved target, not its CPU feature set.
-- The default provider is the vendored GMP path dependency. MPFR and bundled GMP use the same static or dynamic linkage; `-fsys=gmp` selects an installed GMP, while `-fsys=mpfr` translates its installed headers and produces no MPFR artifact. The lifetime test checks header/library version identity in system mode.
+- The default provider is the GMP URL dependency in `build.zig.zon`. MPFR and bundled GMP use the same static or dynamic linkage; `-fsys=gmp` selects an installed GMP, while `-fsys=mpfr` translates its installed headers and produces no MPFR artifact. The lifetime test checks header/library version identity in system mode.
 - Dynamic linkage derives the shared-library version from MPFR's makefile metadata and enables PIC. `-Druntime=true` instead dispatches translated MPFR and GMP symbols through the platform loader; libc declarations stay directly linked.
 - Runtime loading requires the translated provider symbols and validates limb width and disabled float128/decimal options before publishing the dispatch table.
-- Vendored GMP's build glue carries linkage and version derivation in `vendor/gmp/build.zig`, sets `LIBGMP_DLL` from linkage in `vendor/gmp/zig/config_gen.zig`, and includes `Makefile.am` in `vendor/gmp/build.zig.zon` for version lookup; its C sources, headers, tests, and licence files remain unchanged.
-- Zig 0.17 embeds GMP's header and pkg-config templates with `@embedFile`, replacing configure-time reads through the removed `Build.build_root` field.
-- Vendored GMP uses Zig 0.17's `.debug` and `.safe` optimize tags; assertion configuration compares against `.debug`.
 - Zig 0.17 uses `@Int` for the signed integer types in the facade's precision and exponent bounds.
 - Only the standard target publishes the `mpfr` module; matrix targets use private modules so target order cannot change dependency resolution.
-- The default bundled-provider install owns both libraries, public headers, pkg-config files, and licence records; system-provider modes install only artifacts this package builds.
+- MPFR takes GMP's artifact, generated public headers, generated `gmp.pc`, and licence texts from the dependency graph. The default install contains both libraries. System-provider modes install only artifacts this package builds.
 - `check` and `matrix` compile targets but do not execute their binaries.
 
 ## Platform boundaries
 
-The required compile matrix is `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, and `wasm32-wasi`. The WASI route uses vendored GMP's signal emulation.
+The required compile matrix is `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, and `wasm32-wasi`. The WASI route uses the GMP package's signal emulation.
 
-- Hexagon targets are refused because the vendored GMP has no Hexagon port.
+- Hexagon targets are refused because GMP has no Hexagon port.
 - NetBSD targets reach an Aro limitation on `_Pragma` in libc's stdio header. `arm-openbsd`, `powerpc-openbsd`, and `x86-openbsd` hit an Aro `stddef` conflict; MIPS64 OpenBSD headers lack the byte-order macro expected by libc.
 - MinGW GNU shared builds inherit export annotations from GMP headers but have no generated `.def` export list, so complete DLL export coverage is not guaranteed. Static linkage is unaffected.

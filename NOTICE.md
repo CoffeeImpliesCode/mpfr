@@ -53,7 +53,7 @@ The GPL-3 text in `COPYING` covers the GPL-3-or-later files. These tools and dat
 
 ## Fork-authored files
 
-The repository owner authorized an LGPL-3.0-or-later grant for the fork-authored paths listed below; `FORK-LICENSE.md` contains the grant. Upstream files and `README.upstream.md` are excluded. The grant excludes `vendor/gmp` except the three listed build-graph files, which this fork maintains under the grant. Private hosting does not change these terms.
+The repository owner authorized an LGPL-3.0-or-later grant for the fork-authored paths listed below; `FORK-LICENSE.md` contains the grant. Upstream files and `README.upstream.md` are excluded. Private hosting does not change these terms.
 
 | Files | Scope |
 | --- | --- |
@@ -65,24 +65,9 @@ The repository owner authorized an LGPL-3.0-or-later grant for the fork-authored
 | `UPSTREAM-BASELINE.sha256`, `check-upstream-baseline.sh`, `FORK-LICENSE.md` | Fork provenance and licence records |
 | `package.nix`, `flake.nix`, `flake.lock`, `devenv.nix`, `devenv.yaml`, `.envrc` | Fork packaging and development environment |
 | `.gitignore` | The nineteen lines appended by this fork; upstream's 440 bytes remain unchanged |
-| `vendor/gmp/build.zig`, `vendor/gmp/build.zig.zon`, `vendor/gmp/zig/config_gen.zig` | Fork-authored build files inside the GMP snapshot |
 
 `README.upstream.md` is upstream's `README`, copied byte-for-byte from tag `4.2.2` (SHA-256 `74e733d2cfa1a6f4e6530326ed460f13ac9e4a5d79bb0f682ab67db2c9dc4d5b`). It is not fork-authored and is not covered by the grant. `fork/mpfr_all.h` is fork-authored but includes upstream `src/mpfr.h` and `src/mpf2mpfr.h`; those headers retain LGPL-3 terms.
 
-## Vendored GNU MP
+## GNU MP dependency
 
-`vendor/gmp` is a separate GNU MP 6.3.0 snapshot. Its terms are independent of MPFR and, except for the three fork-authored build files above, of the fork grant. GNU MP is copyright the Free Software Foundation and contributors; see `vendor/gmp/AUTHORS`, `ChangeLog` and file headers. See `vendor/gmp/NOTICE.md` for the per-path inventory.
-
-| Licence file | Term |
-| --- | --- |
-| `vendor/gmp/COPYING` | GNU GPL version 3, 29 June 2007 |
-| `vendor/gmp/COPYING.LESSERv3` | GNU LGPL version 3, 29 June 2007, additional permissions |
-| `vendor/gmp/COPYINGv2` | GNU GPL version 2, June 1991 |
-| `vendor/gmp/COPYINGv3` | GNU GPL version 3, 29 June 2007 |
-
-| Files | Licence and scope |
-| --- | --- |
-| GMP library sources, `gmp.h`, `gmp-impl.h` | LGPLv3-or-later or GPLv2-or-later at the user's option |
-| `vendor/gmp/tests/`, `vendor/gmp/demos/` | GPLv2-or-later |
-| `vendor/gmp/gen-*.c`, `vendor/gmp/bootstrap.c` | Same dual choice; build-time generators |
-| GMP fork additions in `vendor/gmp` | LGPLv3-or-later under the GMP snapshot's own notice |
+GMP is a separate package fetched through the URL in `build.zig.zon`. GNU MP is copyright the Free Software Foundation and contributors. The GMP library is LGPL-3.0-or-later or GPL-2.0-or-later, at the recipient's option. Its fork additions carry the GMP package's own grant. See that package's `NOTICE.md`, `AUTHORS`, `ChangeLog`, file headers, and four `COPYING*` texts for attribution and per-path terms. MPFR's fork grant does not cover the dependency.

@@ -126,28 +126,14 @@ stated_div=$(sed -n 's/^# count: recorded divergences from the pin = //p' "$reco
     fail "the record claims $stated_div divergences and records $divergence_count"
 
 stated_mpfr=$(sed -n 's/^# count: GNU MPFR [0-9.a-z]* at [0-9a-f]* = //p' "$record")
-actual_mpfr=$(cat "$tmp/manifest.paths" "$tmp/divergence.paths" |
-    awk '!/^vendor\/gmp\// { n++ } END { print n + 0 }')
+actual_mpfr=$actual_total
 [ "$stated_mpfr" = "$actual_mpfr" ] ||
     fail "the record claims $stated_mpfr MPFR paths and carries $actual_mpfr"
-
-stated_gmp=$(sed -n 's/^# count: GNU MP [0-9.]* under vendor\/gmp\/ = //p' "$record")
-actual_gmp=$(cat "$tmp/manifest.paths" "$tmp/divergence.paths" |
-    awk '/^vendor\/gmp\// { n++ } END { print n + 0 }')
-[ "$stated_gmp" = "$actual_gmp" ] ||
-    fail "the record claims $stated_gmp vendored GMP paths and carries $actual_gmp"
 
 # per-area counts
 cat "$tmp/manifest.paths" "$tmp/divergence.paths" >"$tmp/baseline.paths"
 while read -r path; do
     case "$path" in
-        vendor/gmp/*)
-            rest=${path#vendor/gmp/}
-            case "$rest" in
-                */*) label="vendor/gmp/${rest%%/*}" ;;
-                *) label=vendor/gmp/root ;;
-            esac
-            ;;
         */*) label=${path%%/*} ;;
         *) label=root ;;
     esac
@@ -164,7 +150,7 @@ fi
 # 4. coverage in the other direction
 # ---------------------------------------------------------------------------
 # Build outputs and the version-control directory are not carried bytes.
-find . \( -name .git -o -name .zig-cache -o -name zig-out \) -prune -o -type f -print |
+find . \( -name .git -o -name .zig-cache -o -name zig-out -o -name zig-pkg \) -prune -o -type f -print |
     sed 's#^\./##' | LC_ALL=C sort >"$tmp/carried"
 
 cat "$tmp/manifest.paths" "$tmp/divergence.paths" "$tmp/fork-files" >"$tmp/known"
@@ -245,7 +231,6 @@ fi
 
 echo "upstream baseline verified: $actual_total carried upstream paths"
 echo "  GNU MPFR 4.2.2      $actual_mpfr paths"
-echo "  GNU MP 6.3.0        $actual_gmp paths under vendor/gmp/"
 echo "  byte-identical      $manifest_count"
 echo "  recorded divergence $divergence_count"
 echo "  fork-owned          $carried_fork paths carried alongside"

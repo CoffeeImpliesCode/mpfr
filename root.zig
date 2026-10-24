@@ -147,7 +147,7 @@
 //! `intmax_t` family under MPFR's `__gmpfr_` spellings
 //! (`src/mpfr.h:1162-1179`), GMP's entry points, and GMP's three exported
 //! objects `__gmp_bits_per_limb`, `__gmp_errno` and `__gmp_version`
-//! (`vendor/gmp/gmp-h.in:489-497`). `mpz_t` values are part of MPFR's own API -
+//! (gmp package: `gmp-h.in:489-497`). `mpz_t` values are part of MPFR's own API -
 //! `mpfr_set_z`, `mpfr_get_z` and `mpfr_mul_z` take them
 //! (`src/mpfr.h:487-488, 527, 544`) - so a caller that only ever touches this
 //! facade still needs the GMP closure the provider was built against.
@@ -155,10 +155,10 @@
 //! The facts a provider and this build must agree about, each with its source:
 //!
 //!   * **Limbs.** `mp_limb_t` is `GMP_LIMB_BITS` bits wide
-//!     (`vendor/gmp/gmp-h.in:44-47`), and every limb-count argument and every
+//!     (gmp package: `gmp-h.in:44-47`), and every limb-count argument and every
 //!     significand layout depends on it.
 //!   * **Scalar widths.** `__GMP_MP_SIZE_T_INT` is defined only for CRAY
-//!     targets (`vendor/gmp/gmp-h.in:169-178`), so on every platform this
+//!     targets (gmp package: `gmp-h.in:169-178`), so on every platform this
 //!     package targets `_MPFR_PREC_FORMAT` is 3 and `_MPFR_EXP_FORMAT` follows
 //!     it (`src/mpfr.h:133-143`). `mpfr_prec_t` and `mpfr_exp_t` are therefore
 //!     `long`, and `mpfr_uprec_t` and `mpfr_uexp_t` are `unsigned long`
@@ -1121,7 +1121,7 @@ pub const Float = struct {
     ///
     /// On success the result owns MPFR-allocated memory and owes exactly one
     /// `Digits.deinit`. On `error.InvalidBase` nothing was allocated.
-    /// GMP allocators must not return null (vendor/gmp/doc/gmp.texi:7487-7490);
+    /// GMP allocators must not return null (gmp package: doc/gmp.texi:7487-7490);
     /// the default allocator aborts on allocation failure. An unexpected null
     /// result for a valid base panics in every optimization mode.
     pub fn toDigits(self: *const Float, base: c_int, digits: usize, mode: RoundingMode) ConversionError!Digits {

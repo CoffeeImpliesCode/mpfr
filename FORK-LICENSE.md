@@ -2,7 +2,7 @@
 
 SPDX-License-Identifier: LGPL-3.0-or-later
 
-GNU MPFR is LGPL-3-or-later. Vendored GMP is LGPL-3-or-later or GPL-2-or-later, at the recipient's option. This grant covers only fork additions; upstream and vendored terms are unchanged. `NOTICE.md` lists file licences.
+GNU MPFR is LGPL-3-or-later. The separate GMP dependency is LGPL-3-or-later or GPL-2-or-later, at the recipient's option. This grant covers only fork additions; upstream and dependency terms are unchanged. `NOTICE.md` lists file licences.
 
 ## The grant
 
@@ -40,18 +40,17 @@ Every path below is authored by this fork and is licensed as stated above.
 | `UPSTREAM-BASELINE.sha256`, `check-upstream-baseline.sh` | Upstream-byte baseline and its checker |
 | `package.nix`, `flake.nix`, `flake.lock`, `devenv.nix`, `devenv.yaml`, `.envrc` | Nix packaging and development environment |
 | `.gitignore` | Only the nineteen lines appended by this fork; upstream's 440 bytes remain unchanged |
-| `vendor/gmp/build.zig`, `vendor/gmp/build.zig.zon`, `vendor/gmp/zig/config_gen.zig` | GMP build files maintained by this fork so GMP linkage follows MPFR |
 
 ## Files this grant does not cover
 
 - **Upstream files:** `src/`, `doc/`, `tests/`, `tools/`, `tune/`, `m4/`, `other/`, `examples/`, `README`, `INSTALL`, `NEWS`, `ChangeLog`, `COPYING`, and `COPYING.LESSER` keep their own terms. `NOTICE.md` identifies GPL-3-or-later tooling, GPL-2-or-later test data, and the FDL-1.3-or-later manual.
 - **`README.upstream.md`:** upstream's `README`, copied byte-for-byte; it is outside this grant and carries MPFR's terms.
-- **`vendor/gmp`, except the three build-graph files listed above:** the rest is a separate GMP snapshot, governed by its `NOTICE.md` and four `COPYING*` files. This grant does not reach into it; the three exceptions are covered because this fork maintains them.
+- **GMP dependency:** the separate package is governed by its own `NOTICE.md`, fork grant, and four `COPYING*` files. This grant does not cover it.
 - **Includes of `fork/mpfr_all.h`:** including upstream `mpfr.h` or `mpf2mpfr.h` does not relicense those files.
 
 ## Distribution
 
-Distributions include `COPYING`, `COPYING.LESSER`, and complete corresponding source, including the vendored GMP snapshot. Preserve the ability to relink: the static variant uses `libmpfr.a` with `libgmp.a`; the shared `libmpfr.so` has a real dependency on shared `libgmp` installed beside it. Preserve every upstream copyright notice, per-file exception, and test/data licence listed in `NOTICE.md`.
+Distributions include `COPYING`, `COPYING.LESSER`, and complete corresponding source, including the GMP dependency. Preserve the ability to relink: the static variant uses `libmpfr.a` with `libgmp.a`; the shared `libmpfr.so` has a real dependency on shared `libgmp` installed beside it. Preserve every upstream copyright notice, per-file exception, and test/data licence listed in `NOTICE.md`.
 
 ## Trademarks
 

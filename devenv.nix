@@ -206,7 +206,7 @@ in
       unset mpfr_cache_root
     fi
 
-    echo "MPFR Zig SDK - compiler $(zig version), GMP provider vendor/gmp 6.3.0"
+    echo "MPFR Zig SDK - compiler $(zig version), GMP package dependency 6.3.0"
     echo "  devenv task sdk:build | sdk:test | sdk:smoke | sdk:check | sdk:matrix"
     echo "  devenv task sdk:consumer"
     echo "  ./check-upstream-baseline.sh    every carried upstream byte, against the pin"
