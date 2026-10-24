@@ -36,10 +36,8 @@ Known boundaries: Hexagon is refused because vendored GMP has no port. NetBSD re
 
 Add the package to a consumer's `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .mpfr = .{ .path = "../mpfr" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/mpfr#v4.2.2
 ```
 
 Import the `mpfr` module in `build.zig`:
