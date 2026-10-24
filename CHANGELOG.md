@@ -1,5 +1,7 @@
 # Changelog
 
+- Corrected system-provider flags to `-fsys=gmp` and `-fsys=mpfr`, including runtime-loading configurations.
+
 Changes from GNU MPFR 4.2.2.
 
 - Port to Zig 0.17.0.

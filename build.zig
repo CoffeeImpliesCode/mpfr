@@ -35,7 +35,6 @@ const version_file = @embedFile("VERSION");
 const gmp_pkg_config_template = @embedFile("vendor/gmp/gmp.pc.in");
 
 /// GMP's header template, used to derive its package version.
-
 const gmp_header_template = @embedFile("vendor/gmp/gmp-h.in");
 
 /// Derive the shared-library version from upstream's libtool flags (`src/Makefile.am:106`).
@@ -498,7 +497,7 @@ fn gmpDependency(
             "mpfr: " ++ vendored_gmp ++ " is missing or unreadable. MPFR cannot be " ++
                 "built without GMP, and the shared fork contract requires a " ++
                 "self-contained snapshot: copy the verified GMP package there, " ++
-                "including its build.zig.zon, or pass -Dsystem=gmp to use an " ++
+                "including its build.zig.zon, or pass -fsys=gmp to use an " ++
                 "installed GMP instead.",
         );
     }

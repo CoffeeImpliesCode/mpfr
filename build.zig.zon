@@ -9,7 +9,7 @@
     .minimum_zig_version = "0.17.0",
     .fingerprint = 0x315544a3cf639019,
 
-    // Bundled GMP is the default; `-Dsystem=gmp` selects an installed library.
+    // Bundled GMP is the default; `-fsys=gmp` selects an installed library.
     .dependencies = .{
         .gmp = .{
             .path = "vendor/gmp",

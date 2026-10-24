@@ -54,6 +54,6 @@ The module is named `mpfr`; the library artifact is also named `mpfr` and is ava
 | Option | Effect |
 | --- | --- |
 | `-Dlinkage=static` (default) or `dynamic` | Selects the MPFR artifact linkage; bundled GMP uses the same linkage. |
-| `-Dsystem=gmp` | Uses an installed GMP while building MPFR. |
-| `-Dsystem=mpfr` | Uses installed MPFR headers and library; this package builds no MPFR artifact. |
+| `-fsys=gmp` | Uses an installed GMP while building MPFR. |
+| `-fsys=mpfr` | Uses installed MPFR headers and library; this package builds no MPFR artifact. |
 | `-Druntime=true` | Uses runtime dispatch instead of linking MPFR and GMP; call `load` with an explicit provider before other MPFR calls. |

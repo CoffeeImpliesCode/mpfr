@@ -61,7 +61,7 @@
 //! `MPFR_USE_THREAD_SAFE`, so `MPFR_THREAD_ATTR` expands to nothing
 //! (src/mpfr-thread.h:33-43) and the flags, the exponent limits, the default
 //! precision and the default rounding direction are shared by every thread in
-//! the process (src/mpfr-impl.h:255-260, 323-325). `-Dsystem=mpfr` links an
+//! the process (src/mpfr-impl.h:255-260, 323-325). `-fsys=mpfr` links an
 //! installed library instead, and `c.mpfr_buildopt_tls_p()` reports at run
 //! time whether that library keeps them per thread (src/buildopt.c). Threads
 //! that write these channels need external synchronisation; `Float` and
@@ -1163,7 +1163,7 @@ pub fn isValidBase(base: c_int) bool {
 /// (the `enum_FOO` example in the 0.16 language reference), so this is a
 /// checked narrowing cast rather than an `@enumFromInt`.
 inline fn rnd(rounding: RoundingMode) mpfr.mpfr_rnd_t {
-    return @intCast(@intFromEnum(rounding));
+    return @intCast(@backingInt(rounding));
 }
 
 fn orderOf(value: c_int) Order {
@@ -1202,7 +1202,7 @@ pub fn version() [:0]const u8 {
 /// The patches applied to the linked library, as recorded in the `PATCHES`
 /// file the library was built from (src/Makefile.am:108-111). The `PATCHES`
 /// file in this repository is empty at 4.2.2, so a library built from it
-/// reports `""`; in `-Dsystem=mpfr` mode the string is whatever the installed
+/// reports `""`; in `-fsys=mpfr` mode the string is whatever the installed
 /// library recorded, which is why no caller may assume it is empty. As with
 /// `version`, the slice borrows library storage and is never freed.
 pub fn patches() [:0]const u8 {

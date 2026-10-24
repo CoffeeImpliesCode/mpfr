@@ -25,7 +25,7 @@
  * would describe entry points the linked library never exported.  build.zig
  * gives every libmpfr unit `HAVE_STDINT_H`, which src/mpfr-intmax.h:60-68
  * turns into <stdint.h> plus `MPFR_USE_INTMAX_T` before src/mpfr.h:1151-1155
- * is parsed.  In `-Dsystem=mpfr` mode this header still pins the macro, which
+ * is parsed.  In `-fsys=mpfr` mode this header still pins the macro, which
  * is what doc/mpfr.texi:692-695 recommends for portable user code; the
  * identity check in fork/tests/lifetime_test.zig is what makes an installed
  * library that predates the intmax entry points fail loudly rather than at a

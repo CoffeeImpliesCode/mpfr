@@ -95,7 +95,7 @@ pub fn build(b: *std.Build) void {
 
     // `pkgconfig_DATA = gmp.pc` (Makefile.am:122) is unconditional upstream, so
     // the library and its metadata are installed together or the installed
-    // prefix describes libgmp to nobody. `-Dsystem=gmp` selects an installed
+    // prefix describes libgmp to nobody. `-fsys=gmp` selects an installed
     // GMP and contributes nothing to this prefix - not even metadata naming a
     // library this build did not produce.
     switch (library) {
@@ -176,7 +176,6 @@ fn addTargetCheck(
     const checked_tests = addTests(b, resolved, optimize, checked_module, checked_library, name);
     check_step.dependOn(&checked_tests.step);
 }
-
 
 /// How consumers link GMP: the artifact this build produces, or an installed
 /// system library.
